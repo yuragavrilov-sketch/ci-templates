@@ -110,8 +110,11 @@ container_scan:
   image:
     name: aquasec/trivy:0.51.1
     entrypoint: [""]
+  # Сканируем только когда package реально собрал образ (те же changes). Иначе scan тянет
+  # несуществующий для этого sha образ.
   rules:
     - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+      changes: ["Dockerfile", "src/**/*", "pom.xml"]
   script:
     - trivy image --exit-code 1 --severity HIGH,CRITICAL --no-progress "$IMAGE:$IMAGE_TAG"
 

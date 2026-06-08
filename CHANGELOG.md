@@ -2,6 +2,17 @@
 
 ## [Unreleased]
 
+## [1.1.3]
+
+### Fixed
+- `java-spring`: `container_scan` гейтится теми же `rules:changes`, что `package` — scan только
+  когда образ реально собран (иначе тянет несуществующий для sha образ → docker/remote ошибки).
+
+### Notes
+- Требует group/project CI/CD-переменных `IMAGE_REGISTRY` и `IMAGE_REGISTRY_PROJECT` (Harbor).
+  Без них `IMAGE` = `//<service>` → push/scan/deploy образа не работают. Раньше их давал старый
+  шаблон `microservices/template`.
+
 ## [1.1.2]
 
 ### Fixed
