@@ -102,11 +102,18 @@ package:
     - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
       changes: ["Dockerfile", "src/**/*", "pom.xml"]
   script:
-    # Авторизация Kaniko в Harbor: GitLab сам подкладывает только DOCKER_AUTH_CONFIG; корп-креды
-    # лежат в переменной HARBOR_DOCKER_CONFIG, поэтому пишем её в /kaniko/.docker/config.json.
-    # Robust к типу: File-переменная (значение = путь) или обычная (значение = JSON).
-    - mkdir -p /kaniko/.docker
-    - if [ -f "$HARBOR_DOCKER_CONFIG" ]; then cp "$HARBOR_DOCKER_CONFIG" /kaniko/.docker/config.json; else printf '%s' "$HARBOR_DOCKER_CONFIG" > /kaniko/.docker/config.json; fi
+    # Авторизация Kaniko в Harbor из переменной HARBOR_DOCKER_CONFIG (GitLab сам подкладывает только
+    # DOCKER_AUTH_CONFIG). Robust к формату: File-переменная (путь), сырой JSON ({...) или base64.
+    - |
+      mkdir -p /kaniko/.docker
+      if [ -f "$HARBOR_DOCKER_CONFIG" ]; then
+        cp "$HARBOR_DOCKER_CONFIG" /kaniko/.docker/config.json
+      else
+        case "$HARBOR_DOCKER_CONFIG" in
+          \{*) printf '%s' "$HARBOR_DOCKER_CONFIG" > /kaniko/.docker/config.json ;;
+          *)   printf '%s' "$HARBOR_DOCKER_CONFIG" | base64 -d > /kaniko/.docker/config.json ;;
+        esac
+      fi
     - >
       /kaniko/executor
       --context "$CI_PROJECT_DIR"

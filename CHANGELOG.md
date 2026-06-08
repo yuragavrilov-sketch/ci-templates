@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+## [1.1.5]
+
+### Fixed
+- `java-spring`: `package` определяет формат `HARBOR_DOCKER_CONFIG` — путь(File) / сырой JSON / 
+  base64 (корп-значение base64-кодировано: `base64 -d` перед записью в config.json). Раньше base64
+  писался как есть → Kaniko `invalid character 'e'`.
+
 ## [1.1.4]
 
 ### Added
