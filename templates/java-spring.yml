@@ -154,7 +154,19 @@ container_scan:
     - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
       changes: ["Dockerfile", "src/**/*", "pom.xml"]
   script:
-    - trivy image --exit-code 1 --severity HIGH,CRITICAL --no-progress "$IMAGE:$IMAGE_TAG"
+    # Harbor приватный + внутренний CA: креды из HARBOR_DOCKER_CONFIG (pull) + --insecure (TLS,
+    # accepted-for-test, как Kaniko/helm). PROD-харденинг: примонтировать корп-CA.
+    - |
+      mkdir -p "$HOME/.docker"
+      if [ -f "$HARBOR_DOCKER_CONFIG" ]; then
+        cp "$HARBOR_DOCKER_CONFIG" "$HOME/.docker/config.json"
+      else
+        case "$HARBOR_DOCKER_CONFIG" in
+          \{*) printf '%s' "$HARBOR_DOCKER_CONFIG" > "$HOME/.docker/config.json" ;;
+          *)   printf '%s' "$HARBOR_DOCKER_CONFIG" | base64 -d > "$HOME/.docker/config.json" ;;
+        esac
+      fi
+    - trivy image --exit-code 1 --severity HIGH,CRITICAL --no-progress --insecure "$IMAGE:$IMAGE_TAG"
 
 deploy_test:
   stage: deploy

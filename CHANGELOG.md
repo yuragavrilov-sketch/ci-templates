@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## [1.1.8]
+
+### Fixed
+- `java-spring`: `container_scan` подкладывает `HARBOR_DOCKER_CONFIG` (приватный Harbor pull) и
+  `trivy --insecure` (внутренний CA, `x509`). Accepted-for-test. PROD: примонтировать корп-CA.
+
 ## [1.1.7]
 
 ### Fixed
