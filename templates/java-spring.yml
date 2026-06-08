@@ -114,12 +114,17 @@ package:
           *)   printf '%s' "$HARBOR_DOCKER_CONFIG" | base64 -d > /kaniko/.docker/config.json ;;
         esac
       fi
+    # --skip-tls-verify: Harbor на внутреннем CA, которому образ Kaniko не доверяет. Accepted-for-test
+    # (как helm --insecure-skip-tls-verify). PROD-харденинг: примонтировать корп-CA в /kaniko/ssl/certs/
+    # (additional-ca-cert-bundle) и убрать skip.
     - >
       /kaniko/executor
       --context "$CI_PROJECT_DIR"
       --dockerfile "$CI_PROJECT_DIR/Dockerfile"
       --destination "$IMAGE:$IMAGE_TAG"
       --cache=true
+      --skip-tls-verify
+      --skip-tls-verify-pull
 
 container_scan:
   stage: scan

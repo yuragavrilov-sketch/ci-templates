@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+## [1.1.6]
+
+### Fixed
+- `java-spring`: `package` (Kaniko) с `--skip-tls-verify`/`--skip-tls-verify-pull` — Harbor на
+  внутреннем CA (`x509: signed by unknown authority`). Accepted-for-test, как helm
+  `--insecure-skip-tls-verify`. PROD-харденинг: примонтировать корп-CA в `/kaniko/ssl/certs/`.
+
 ## [1.1.5]
 
 ### Fixed
