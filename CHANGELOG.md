@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+## [1.1.4]
+
+### Added
+- `java-spring`: inputs `image_registry` (default `harbor.online.tkbbank.ru`) и
+  `image_registry_project` (default `tkbpay`) — `IMAGE` строится из них, а не из CI/CD-переменных
+  `IMAGE_REGISTRY`/`IMAGE_REGISTRY_PROJECT`. Переопределяется на сервис через inputs.
+- `java-spring`: `package` пишет креды Harbor из CI/CD-переменной `HARBOR_DOCKER_CONFIG` в
+  `/kaniko/.docker/config.json` (GitLab сам подкладывает только `DOCKER_AUTH_CONFIG`). Robust к
+  типу переменной (File→путь / обычная→JSON).
+
 ## [1.1.3]
 
 ### Fixed

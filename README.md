@@ -15,7 +15,7 @@ GitLab CI/CD Components для PAY_ALL. Единый источник пайпл
 
 ```yaml
 include:
-  - component: $CI_SERVER_FQDN/tkbpay/ci-templates/java-spring@1.1.3
+  - component: $CI_SERVER_FQDN/tkbpay/ci-templates/java-spring@1.1.4
     inputs:
       release_name: my-service      # DNS-1123, без подчёркиваний
       with_cert: true               # опц., корп. CA в truststore
@@ -33,6 +33,12 @@ include:
 | `chart_name` | `kubernetes/java` | имя чарта |
 | `chart_version` | `0.4.0` | версия чарта |
 | `namespace` | `test` | k8s namespace |
+| `image_registry` | `harbor.online.tkbbank.ru` | Docker registry host (Harbor) |
+| `image_registry_project` | `tkbpay` | проект реестра под образы |
+
+`IMAGE` = `<image_registry>/<image_registry_project>/$CI_PROJECT_NAME`. Push в Harbor требует
+креды в CI/CD-переменной группы **`HARBOR_DOCKER_CONFIG`** (docker `config.json`) — `package`
+пишет их в `/kaniko/.docker/config.json`; в код секрет не выносится.
 
 ## Компонент `node-spa`
 
@@ -72,7 +78,8 @@ deploy:test(manual) → smoke (`GET /`, порт 80).
 
 ## Требования к runner'ам и переменным (CI/CD variables группы)
 
-- `IMAGE_REGISTRY`, `IMAGE_REGISTRY_PROJECT` — Harbor; docker-config/robot-creds для Kaniko.
+- `HARBOR_DOCKER_CONFIG` — docker `config.json`/robot-creds Harbor для Kaniko-push.
+  (Хост/проект реестра — это inputs компонента `image_registry`/`image_registry_project`.)
 - `K8S_CONFIG_test` — kubeconfig (file, protected).
 - Runner'ы должны уметь запускать Kaniko (`gcr.io/kaniko-project/executor:debug`). Если только
   DinD — заменить job `package` (см. spec, вариант DinD).

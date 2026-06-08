@@ -18,6 +18,12 @@ spec:
       default: "0.4.0"
     namespace:
       default: "test"
+    image_registry:
+      default: "harbor.online.tkbbank.ru"
+      description: "Docker registry host (Harbor)"
+    image_registry_project:
+      default: "tkbpay"
+      description: "Проект/namespace реестра под образы сервисов"
 ---
 include:
   - local: "templates/_deploy.yml"
@@ -30,7 +36,7 @@ variables:
   # ВНИМАНИЕ: MAVEN_OPTS уходит в JVM, а не в Maven. Флаг `-B` (batch) — это опция Maven,
   # в JVM он даёт "Unrecognized option: -B". Поэтому `-B` только в командной строке `mvn`.
   MAVEN_OPTS: "-Dmaven.repo.local=.m2/repository"
-  IMAGE: "$IMAGE_REGISTRY/$IMAGE_REGISTRY_PROJECT/$CI_PROJECT_NAME"
+  IMAGE: "$[[ inputs.image_registry ]]/$[[ inputs.image_registry_project ]]/$CI_PROJECT_NAME"
   IMAGE_TAG: "$CI_COMMIT_SHORT_SHA"
 
 stages: [validate, test, package, scan, deploy, smoke]
@@ -96,6 +102,11 @@ package:
     - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
       changes: ["Dockerfile", "src/**/*", "pom.xml"]
   script:
+    # Авторизация Kaniko в Harbor: GitLab сам подкладывает только DOCKER_AUTH_CONFIG; корп-креды
+    # лежат в переменной HARBOR_DOCKER_CONFIG, поэтому пишем её в /kaniko/.docker/config.json.
+    # Robust к типу: File-переменная (значение = путь) или обычная (значение = JSON).
+    - mkdir -p /kaniko/.docker
+    - if [ -f "$HARBOR_DOCKER_CONFIG" ]; then cp "$HARBOR_DOCKER_CONFIG" /kaniko/.docker/config.json; else printf '%s' "$HARBOR_DOCKER_CONFIG" > /kaniko/.docker/config.json; fi
     - >
       /kaniko/executor
       --context "$CI_PROJECT_DIR"
