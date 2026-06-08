@@ -1,0 +1,40 @@
+# Общие скрытые job'ы деплоя и smoke для компонентов ci-templates.
+# Включаются через `include: { local: "templates/_deploy.yml" }` внутри компонентов;
+# путь резолвится относительно репозитория ci-templates.
+
+.helm_deploy:
+  image: dtzar/helm-kubectl:3.14
+  variables:
+    CHART_REPO: "https://harbor.online.tkbbank.ru/chartrepo/kubernetes"
+    CHART_NAME: "kubernetes/java"
+    CHART_VERSION: "0.4.0"
+    NAMESPACE: "test"
+    VALUES_PATH: "helm/values-test.yaml"
+    IMAGE_TAG: "$CI_COMMIT_SHORT_SHA"
+  script:
+    - K8S_CONFIG=K8S_CONFIG_${ENV}
+    - chmod 0400 $(echo "${!K8S_CONFIG}")
+    - export KUBECONFIG=$(echo "${!K8S_CONFIG}")
+    - helm repo add kubernetes --insecure-skip-tls-verify=true $CHART_REPO
+    - >
+      helm upgrade $RELEASE_NAME --install --insecure-skip-tls-verify=true
+      --version=$CHART_VERSION $CHART_NAME
+      --set image.tag=$IMAGE_TAG -f $VALUES_PATH --namespace=$NAMESPACE
+      --wait --timeout 5m
+
+.smoke:
+  image: dtzar/helm-kubectl:3.14
+  variables:
+    NAMESPACE: "test"
+    HEALTH_PATH: "/actuator/health"
+    SERVICE_PORT: "8080"
+  script:
+    - K8S_CONFIG=K8S_CONFIG_${ENV}
+    - export KUBECONFIG=$(echo "${!K8S_CONFIG}")
+    - kubectl rollout status deploy/$RELEASE_NAME -n $NAMESPACE --timeout=120s
+    # Базовый health-чек (200). При неверной Vault-политике сервис не стартует и rollout status
+    # выше уже упадёт. Опциональная строгая проверка vault-компонента — см. DEVOPS-CHECKLIST.md §5.
+    - >
+      kubectl run smoke-$CI_JOB_ID --rm -i --restart=Never -n $NAMESPACE
+      --image=curlimages/curl:8.7.1 --
+      curl -fsS "http://$RELEASE_NAME:$SERVICE_PORT$HEALTH_PATH"

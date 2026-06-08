@@ -1,0 +1,168 @@
+spec:
+  inputs:
+    release_name:
+      description: "Helm release name (DNS-1123, без подчёркиваний)"
+    values_path:
+      default: "helm/values-test.yaml"
+    node_image:
+      default: "node:22-alpine"
+    chart_repo:
+      default: "https://harbor.online.tkbbank.ru/chartrepo/kubernetes"
+    chart_name:
+      default: "kubernetes/web"
+    chart_version:
+      default: "0.1.0"
+    namespace:
+      default: "test"
+    vite_auth_enabled:
+      default: "true"
+    vite_kc_url:
+      default: ""
+    vite_kc_realm:
+      default: "payadmin"
+    vite_kc_client_id:
+      default: "payadmin-front"
+---
+include:
+  - local: "templates/_deploy.yml"
+  - template: Jobs/SAST.gitlab-ci.yml
+  - template: Jobs/Dependency-Scanning.gitlab-ci.yml
+
+variables:
+  IMAGE: "$IMAGE_REGISTRY/$IMAGE_REGISTRY_PROJECT/$CI_PROJECT_NAME"
+  IMAGE_TAG: "$CI_COMMIT_SHORT_SHA"
+
+stages: [validate, test, package, scan, deploy, smoke]
+
+.npm_cache: &npm_cache
+  cache:
+    key:
+      files: ["package-lock.json"]
+    paths: [".npm"]
+
+.rules_mr_main:
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+
+validate:
+  stage: validate
+  image: $[[ inputs.node_image ]]
+  <<: *npm_cache
+  extends: .rules_mr_main
+  script:
+    - npm ci --cache .npm --prefer-offline
+    - npm run typecheck
+
+test:
+  stage: test
+  image: $[[ inputs.node_image ]]
+  <<: *npm_cache
+  extends: .rules_mr_main
+  script:
+    - npm ci --cache .npm --prefer-offline
+    - npx vitest run --reporter=default --reporter=junit --outputFile=junit.xml
+    # npm audit is non-fatal: corp Nexus npm proxy has no audit endpoint (400 without Nexus
+    # Lifecycle/Firewall). SCA is covered by the Dependency-Scanning job. Consuming projects may
+    # also override `test.script` to drop it entirely.
+    - npm audit --audit-level=high || true
+  artifacts:
+    when: always
+    reports:
+      junit: junit.xml
+
+package:
+  stage: package
+  # DinD build+push (runners have no Kaniko). Requires a docker-capable (privileged) runner —
+  # the same one that builds the java images.
+  image: docker:27
+  services:
+    - docker:27-dind
+  variables:
+    DOCKER_HOST: "tcp://docker:2376"
+    DOCKER_TLS_CERTDIR: "/certs"
+    DOCKER_TLS_VERIFY: "1"
+    DOCKER_CERT_PATH: "/certs/client"
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+      changes:
+        - "Dockerfile"
+        - "src/**/*"
+        - "package.json"
+        - "package-lock.json"
+        - "vite.config.*"
+        - "index.html"
+        - "nginx.conf"
+  before_script:
+    # Harbor auth for push. Reuse the group's docker-config (GitLab DOCKER_AUTH_CONFIG variable —
+    # the same Harbor robot creds used elsewhere). If your group instead exposes named creds,
+    # replace with:  docker login -u "$HARBOR_USER" -p "$HARBOR_PASSWORD" "$IMAGE_REGISTRY"
+    - mkdir -p ~/.docker && printf '%s' "$DOCKER_AUTH_CONFIG" > ~/.docker/config.json
+  script:
+    - >
+      docker build
+      --build-arg VITE_AUTH_ENABLED="$[[ inputs.vite_auth_enabled ]]"
+      --build-arg VITE_KC_URL="$[[ inputs.vite_kc_url ]]"
+      --build-arg VITE_KC_REALM="$[[ inputs.vite_kc_realm ]]"
+      --build-arg VITE_KC_CLIENT_ID="$[[ inputs.vite_kc_client_id ]]"
+      -t "$IMAGE:$IMAGE_TAG" .
+    - docker push "$IMAGE:$IMAGE_TAG"
+
+container_scan:
+  stage: scan
+  # Reset the entrypoint: the trivy image's ENTRYPOINT is `trivy`, so GitLab's `sh -c` wrapper would
+  # run `trivy sh -c ...` -> "unknown command sh". Empty entrypoint lets the script run normally.
+  image:
+    name: aquasec/trivy:0.51.1
+    entrypoint: [""]
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+  before_script:
+    # Trivy pulls the just-built private image from Harbor — give it the same docker-config auth.
+    - mkdir -p ~/.docker && printf '%s' "$DOCKER_AUTH_CONFIG" > ~/.docker/config.json
+  script:
+    - trivy image --exit-code 1 --severity HIGH,CRITICAL --no-progress "$IMAGE:$IMAGE_TAG"
+
+deploy_test:
+  stage: deploy
+  extends: .helm_deploy
+  variables:
+    ENV: test
+    RELEASE_NAME: "$[[ inputs.release_name ]]"
+    CHART_REPO: "$[[ inputs.chart_repo ]]"
+    CHART_NAME: "$[[ inputs.chart_name ]]"
+    CHART_VERSION: "$[[ inputs.chart_version ]]"
+    NAMESPACE: "$[[ inputs.namespace ]]"
+    VALUES_PATH: "$[[ inputs.values_path ]]"
+  when: manual
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+
+# Перевыкатка / новые values без сборки (spec §13). «Run pipeline» с DEPLOY_IMAGE_TAG=<sha>.
+deploy_only:
+  stage: deploy
+  extends: .helm_deploy
+  variables:
+    ENV: test
+    RELEASE_NAME: "$[[ inputs.release_name ]]"
+    CHART_REPO: "$[[ inputs.chart_repo ]]"
+    CHART_NAME: "$[[ inputs.chart_name ]]"
+    CHART_VERSION: "$[[ inputs.chart_version ]]"
+    NAMESPACE: "$[[ inputs.namespace ]]"
+    VALUES_PATH: "$[[ inputs.values_path ]]"
+    IMAGE_TAG: "$DEPLOY_IMAGE_TAG"
+  rules:
+    - if: '$DEPLOY_IMAGE_TAG'
+
+smoke_test:
+  stage: smoke
+  extends: .smoke
+  variables:
+    ENV: test
+    RELEASE_NAME: "$[[ inputs.release_name ]]"
+    NAMESPACE: "$[[ inputs.namespace ]]"
+    HEALTH_PATH: "/"     # фронт — статика, actuator отсутствует
+    SERVICE_PORT: "80"
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+      when: on_success

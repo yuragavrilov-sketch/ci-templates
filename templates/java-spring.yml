@@ -1,0 +1,170 @@
+spec:
+  inputs:
+    release_name:
+      description: "Helm release name (DNS-1123, без подчёркиваний)"
+    with_cert:
+      type: boolean
+      default: false
+      description: "Подмешивать корпоративный CA в truststore (вариант -withcert)"
+    values_path:
+      default: "helm/values-test.yaml"
+    maven_image:
+      default: "maven:3.9-eclipse-temurin-21"
+    chart_repo:
+      default: "https://harbor.online.tkbbank.ru/chartrepo/kubernetes"
+    chart_name:
+      default: "kubernetes/java"
+    chart_version:
+      default: "0.4.0"
+    namespace:
+      default: "test"
+---
+include:
+  - local: "templates/_deploy.yml"
+  # Source-сканы (выполняются в стадии test, блокирующие). Если в self-managed GitLab
+  # эти шаблоны/лицензии недоступны — закомментировать (см. предусловие P4 плана).
+  - template: Jobs/SAST.gitlab-ci.yml
+  - template: Jobs/Dependency-Scanning.gitlab-ci.yml
+
+variables:
+  MAVEN_OPTS: "-Dmaven.repo.local=.m2/repository -B"
+  IMAGE: "$IMAGE_REGISTRY/$IMAGE_REGISTRY_PROJECT/$CI_PROJECT_NAME"
+  IMAGE_TAG: "$CI_COMMIT_SHORT_SHA"
+
+stages: [validate, test, package, scan, deploy, smoke]
+
+.mvn_cache: &mvn_cache
+  cache:
+    key:
+      files: ["pom.xml"]
+    paths: [".m2/repository"]
+
+.rules_mr_main:
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+
+validate:
+  stage: validate
+  image: $[[ inputs.maven_image ]]
+  <<: *mvn_cache
+  extends: .rules_mr_main
+  script:
+    # checkstyle:check требует подключённого maven-checkstyle-plugin в pom.
+    # Если плагина нет — оставить только `mvn -B compile`.
+    - mvn -B compile checkstyle:check
+
+# Валидация Vault-политики (policy-as-code, spec §14). Без привилегированного токена.
+# Запускается только если в репо есть vault/policy.hcl.
+vault_policy_validate:
+  stage: validate
+  image: hashicorp/vault:1.18
+  rules:
+    - exists: ["vault/policy.hcl"]
+      if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - exists: ["vault/policy.hcl"]
+      if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+  script:
+    - vault policy fmt -check vault/policy.hcl
+
+test:
+  stage: test
+  image: $[[ inputs.maven_image ]]
+  <<: *mvn_cache
+  extends: .rules_mr_main
+  script:
+    - mvn -B verify
+  artifacts:
+    when: always
+    paths: ["target/*.jar"]
+    reports:
+      junit: "target/surefire-reports/TEST-*.xml"
+
+package:
+  stage: package
+  image:
+    name: gcr.io/kaniko-project/executor:debug
+    entrypoint: [""]
+  # Собираем образ только при изменении того, что на него влияет.
+  # Коммит, трогающий только helm/** — сборку не триггерит (см. spec §13).
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+      changes: ["Dockerfile", "src/**/*", "pom.xml"]
+  script:
+    - >
+      /kaniko/executor
+      --context "$CI_PROJECT_DIR"
+      --dockerfile "$CI_PROJECT_DIR/Dockerfile"
+      --destination "$IMAGE:$IMAGE_TAG"
+      --cache=true
+
+container_scan:
+  stage: scan
+  image: aquasec/trivy:0.51.1
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+  script:
+    - trivy image --exit-code 1 --severity HIGH,CRITICAL --no-progress "$IMAGE:$IMAGE_TAG"
+
+deploy_test:
+  stage: deploy
+  extends: .helm_deploy
+  variables:
+    ENV: test
+    RELEASE_NAME: "$[[ inputs.release_name ]]"
+    CHART_REPO: "$[[ inputs.chart_repo ]]"
+    CHART_NAME: "$[[ inputs.chart_name ]]"
+    CHART_VERSION: "$[[ inputs.chart_version ]]"
+    NAMESPACE: "$[[ inputs.namespace ]]"
+    VALUES_PATH: "$[[ inputs.values_path ]]"
+  when: manual
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+
+# Перевыкатка указанного образа / применение новых values без сборки (spec §13).
+# Триггерится через «Run pipeline» с переменной DEPLOY_IMAGE_TAG=<sha>:
+# validate/test/package/scan не матчатся → пропускаются, выполняется только helm upgrade.
+deploy_only:
+  stage: deploy
+  extends: .helm_deploy
+  variables:
+    ENV: test
+    RELEASE_NAME: "$[[ inputs.release_name ]]"
+    CHART_REPO: "$[[ inputs.chart_repo ]]"
+    CHART_NAME: "$[[ inputs.chart_name ]]"
+    CHART_VERSION: "$[[ inputs.chart_version ]]"
+    NAMESPACE: "$[[ inputs.namespace ]]"
+    VALUES_PATH: "$[[ inputs.values_path ]]"
+    IMAGE_TAG: "$DEPLOY_IMAGE_TAG"
+  rules:
+    - if: '$DEPLOY_IMAGE_TAG'
+
+# Применение Vault-политики/роли — централизованно (spec §14). Эта джоба токена НЕ держит:
+# она лишь триггерит привилегированный downstream-пайплайн vault-config, который клонирует
+# репо сервиса и делает `vault policy write` + `vault write auth/kubernetes/role/...`.
+vault_apply:
+  stage: deploy
+  trigger:
+    project: tkbpay/vault-config
+    branch: main
+    strategy: depend
+  variables:
+    TARGET_APP: "$CI_PROJECT_NAME"
+    TARGET_ENV: test
+    TARGET_REF: "$CI_COMMIT_SHA"
+    TARGET_REPO_URL: "$CI_PROJECT_URL.git"
+  when: manual
+  rules:
+    - exists: ["vault/policy.hcl"]
+      if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+
+smoke_test:
+  stage: smoke
+  extends: .smoke
+  variables:
+    ENV: test
+    RELEASE_NAME: "$[[ inputs.release_name ]]"
+    NAMESPACE: "$[[ inputs.namespace ]]"
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+      when: on_success

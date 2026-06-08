@@ -1,0 +1,27 @@
+# Самопроверка репо ci-templates: подключаем собственный компонент по текущему SHA.
+# Цель — убедиться, что компонент валиден и резолвится. Сборка/деплой здесь не нужны:
+# package/container_scan/deploy_* отключены (нет Dockerfile/кластера у самого ci-templates).
+include:
+  - component: $CI_SERVER_FQDN/$CI_PROJECT_PATH/java-spring@$CI_COMMIT_SHA
+    inputs:
+      release_name: ci-templates-selftest
+
+package:
+  rules:
+    - when: never
+
+container_scan:
+  rules:
+    - when: never
+
+deploy_test:
+  rules:
+    - when: never
+
+deploy_only:
+  rules:
+    - when: never
+
+smoke_test:
+  rules:
+    - when: never

@@ -1,0 +1,33 @@
+# Changelog
+
+## [Unreleased]
+
+## [1.1.0]
+
+### Added
+- `node-spa` — CI/CD-компонент для SPA-фронта (Vite → nginx): typecheck / vitest+audit /
+  package(Kaniko + VITE build-args) / scan(Trivy) / deploy:test(manual, web-чарт) / smoke (GET /).
+- Generic web/nginx Helm-чарт публикуется как `kubernetes/web` (см. `charts/web/`).
+- `java-spring`: поддержка Vault policy-as-code — джоба `vault_policy_validate` (валидация
+  `vault/policy.hcl`, без токена) + `vault_apply` (manual-триггер привилегированного `vault-config`).
+  Применение политик — централизованно (least-privilege).
+
+### Migration
+- Сервисы, которым нужны vault-джобы, поднимают пин компонента: `java-spring@1.0.0` → `@1.1.0`
+  в `.gitlab-ci.yml`. Без бампа версии `vault_policy_validate`/`vault_apply` не появятся, даже если
+  в репо есть `vault/policy.hcl`.
+
+## [1.0.0]
+
+### Added
+- `java-spring` — первый CI/CD-компонент: стадии validate / test / package(Kaniko) /
+  scan(Trivy) / deploy:test(manual) / smoke.
+- `_deploy.yml` — общие скрытые job'ы `.helm_deploy` и `.smoke`.
+- `rules:changes` на `package` + джоба `deploy_only` — перевыкатка/смена values без пересборки.
+
+### Notes
+- SAST / Dependency-Scanning подключаются стандартными шаблонами GitLab (требуют доступности
+  в self-managed инстансе).
+- Сборка образа — Kaniko (rootless). Для DinD-раннеров заменить job `package`.
+
+<!-- При первом релизе перенести из Unreleased в раздел версии и протегировать `1.0.0`. -->
