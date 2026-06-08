@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+## [1.1.7]
+
+### Fixed
+- `java-spring`: `package` при `with_cert: true` кладёт корп-CA из `$CERT` в `certs/` (Dockerfile
+  делает `COPY certs/` и импортит keytool'ом) — иначе сборка падает «no corporate CA found».
+- `java-spring`: `test` отдаёт артефактом `deploy/*.jar` (boot-jar из spring-boot repackage), а не
+  `target/*.jar` — его COPY'ит Dockerfile.
+
 ## [1.1.6]
 
 ### Fixed

@@ -15,7 +15,7 @@ GitLab CI/CD Components для PAY_ALL. Единый источник пайпл
 
 ```yaml
 include:
-  - component: $CI_SERVER_FQDN/tkbpay/ci-templates/java-spring@1.1.6
+  - component: $CI_SERVER_FQDN/tkbpay/ci-templates/java-spring@1.1.7
     inputs:
       release_name: my-service      # DNS-1123, без подчёркиваний
       with_cert: true               # опц., корп. CA в truststore

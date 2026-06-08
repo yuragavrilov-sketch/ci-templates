@@ -87,7 +87,9 @@ test:
     - mvn -B verify
   artifacts:
     when: always
-    paths: ["target/*.jar"]
+    # spring-boot-maven-plugin repackage кладёт boot-jar в deploy/ (см. pom outputDirectory) —
+    # именно его COPY'ит Dockerfile (deploy/<svc>-*.jar). package берёт этот артефакт.
+    paths: ["deploy/*.jar"]
     reports:
       junit: "target/surefire-reports/TEST-*.xml"
 
@@ -113,6 +115,19 @@ package:
           \{*) printf '%s' "$HARBOR_DOCKER_CONFIG" > /kaniko/.docker/config.json ;;
           *)   printf '%s' "$HARBOR_DOCKER_CONFIG" | base64 -d > /kaniko/.docker/config.json ;;
         esac
+      fi
+      # with_cert: Dockerfile делает COPY certs/ и импортит корп-CA. Кладём $CERT в certs/
+      # (robust: File-переменная → путь, сырой PEM, или base64). Старый docker_build делал то же.
+      if [ "$[[ inputs.with_cert ]]" = "true" ]; then
+        mkdir -p certs
+        if [ -f "$CERT" ]; then
+          cp "$CERT" certs/corp-ca.crt
+        else
+          case "$CERT" in
+            *BEGIN*CERTIFICATE*) printf '%s' "$CERT" > certs/corp-ca.crt ;;
+            *) printf '%s' "$CERT" | base64 -d > certs/corp-ca.crt ;;
+          esac
+        fi
       fi
     # --skip-tls-verify: Harbor на внутреннем CA, которому образ Kaniko не доверяет. Accepted-for-test
     # (как helm --insecure-skip-tls-verify). PROD-харденинг: примонтировать корп-CA в /kaniko/ssl/certs/
