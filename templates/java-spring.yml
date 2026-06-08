@@ -24,6 +24,12 @@ spec:
     image_registry_project:
       default: "tkbpay"
       description: "Проект/namespace реестра под образы сервисов"
+    trivy_db_repository:
+      default: "ghcr.io/aquasecurity/trivy-db:2"
+      description: "Trivy vuln DB. В закрытом контуре зеркалить в Harbor и указать здесь."
+    trivy_java_db_repository:
+      default: "ghcr.io/aquasecurity/trivy-java-db:1"
+      description: "Trivy Java DB. В закрытом контуре зеркалить в Harbor."
 ---
 include:
   - local: "templates/_deploy.yml"
@@ -153,6 +159,9 @@ container_scan:
   rules:
     - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
       changes: ["Dockerfile", "src/**/*", "pom.xml"]
+  # Закрытый контур: trivy-db с ghcr недоступна → не блокируем деплой сканом.
+  # PROD-харденинг: зеркалить DB в Harbor (inputs trivy_db_repository/_java_) и снять allow_failure.
+  allow_failure: true
   script:
     # Harbor приватный + внутренний CA: креды из HARBOR_DOCKER_CONFIG (pull) + --insecure (TLS,
     # accepted-for-test, как Kaniko/helm). PROD-харденинг: примонтировать корп-CA.
@@ -166,7 +175,11 @@ container_scan:
           *)   printf '%s' "$HARBOR_DOCKER_CONFIG" | base64 -d > "$HOME/.docker/config.json" ;;
         esac
       fi
-    - trivy image --exit-code 1 --severity HIGH,CRITICAL --no-progress --insecure "$IMAGE:$IMAGE_TAG"
+    - >
+      trivy image --exit-code 1 --severity HIGH,CRITICAL --no-progress --insecure
+      --db-repository "$[[ inputs.trivy_db_repository ]]"
+      --java-db-repository "$[[ inputs.trivy_java_db_repository ]]"
+      "$IMAGE:$IMAGE_TAG"
 
 deploy_test:
   stage: deploy

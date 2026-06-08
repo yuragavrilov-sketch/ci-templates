@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+## [1.1.9]
+
+### Changed
+- `java-spring`: `container_scan` → `allow_failure: true` (закрытый контур: trivy-db с ghcr
+  недоступна, не блокируем деплой). Inputs `trivy_db_repository`/`trivy_java_db_repository` для
+  зеркала БД в Harbor. PROD: зеркалить DB и снять allow_failure.
+
 ## [1.1.8]
 
 ### Fixed
