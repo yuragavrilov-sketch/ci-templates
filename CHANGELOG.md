@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+## [1.1.1]
+
+### Fixed
+- `java-spring`: `MAVEN_OPTS` больше не содержит `-B` (флаг Maven, не JVM — давал
+  `Unrecognized option: -B / Could not create the JVM`); `-B` остаётся только в командной строке `mvn`.
+- `java-spring`: `vault_policy_validate` использует `vault policy fmt` (без несуществующего флага
+  `-check`).
+- `java-spring`: `validate` гонит `mvn -B compile` (без `checkstyle:check` — плагина нет в pom'ах).
+
 ## [1.1.0]
 
 ### Added

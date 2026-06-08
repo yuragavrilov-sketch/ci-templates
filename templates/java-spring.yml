@@ -27,7 +27,9 @@ include:
   - template: Jobs/Dependency-Scanning.gitlab-ci.yml
 
 variables:
-  MAVEN_OPTS: "-Dmaven.repo.local=.m2/repository -B"
+  # ВНИМАНИЕ: MAVEN_OPTS уходит в JVM, а не в Maven. Флаг `-B` (batch) — это опция Maven,
+  # в JVM он даёт "Unrecognized option: -B". Поэтому `-B` только в командной строке `mvn`.
+  MAVEN_OPTS: "-Dmaven.repo.local=.m2/repository"
   IMAGE: "$IMAGE_REGISTRY/$IMAGE_REGISTRY_PROJECT/$CI_PROJECT_NAME"
   IMAGE_TAG: "$CI_COMMIT_SHORT_SHA"
 
@@ -66,7 +68,9 @@ vault_policy_validate:
     - exists: ["vault/policy.hcl"]
       if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
   script:
-    - vault policy fmt -check vault/policy.hcl
+    # `vault policy fmt` парсит HCL (ловит синтаксис) и форматирует на месте — токен не нужен.
+    # Флага `-check` у него нет (это из terraform fmt); невалидный HCL даёт ненулевой код.
+    - vault policy fmt vault/policy.hcl
 
 test:
   stage: test
