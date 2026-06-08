@@ -105,7 +105,11 @@ package:
 
 container_scan:
   stage: scan
-  image: aquasec/trivy:0.51.1
+  # entrypoint: [""] — у образа trivy бинарный entrypoint (`trivy`); без сброса GitLab передаёт
+  # шелл-скрипт джобы как аргументы trivy → "unknown command sh".
+  image:
+    name: aquasec/trivy:0.51.1
+    entrypoint: [""]
   rules:
     - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
   script:

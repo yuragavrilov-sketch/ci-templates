@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## [1.1.2]
+
+### Fixed
+- `java-spring`: `container_scan` сбрасывает entrypoint образа trivy (`entrypoint: [""]`) — иначе
+  шелл-скрипт джобы уходит в `trivy` как аргументы (`unknown command "sh"`).
+
 ## [1.1.1]
 
 ### Fixed
