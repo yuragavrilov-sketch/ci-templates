@@ -50,9 +50,10 @@ validate:
   <<: *mvn_cache
   extends: .rules_mr_main
   script:
-    # checkstyle:check требует подключённого maven-checkstyle-plugin в pom.
-    # Если плагина нет — оставить только `mvn -B compile`.
-    - mvn -B compile checkstyle:check
+    # Базовая компиляция как быстрый гейт. checkstyle:check намеренно НЕ включён: в pom'ах сервисов
+    # PAY_ALL нет maven-checkstyle-plugin. Подключить отдельной строкой `mvn checkstyle:check`,
+    # когда плагин появится в репозитории.
+    - mvn -B compile
 
 # Валидация Vault-политики (policy-as-code, spec §14). Без привилегированного токена.
 # Запускается только если в репо есть vault/policy.hcl.
