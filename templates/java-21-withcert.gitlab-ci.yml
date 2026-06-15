@@ -73,6 +73,11 @@ variables:
     BYBxI5kwU/NFuXix9rsaEXgFfuXDs+KgVJdAE65pH1T5bKEW+mXWob1tw2QmbyqM
     E1Hrrtwt21Ds00ky2q3vplDltZQc2J6jHih3s9144a4kGWefAxlH
     -----END CERTIFICATE-----
+  # Новый корень (+ intermediate) repository.transcapital.com — 4096 бит.
+  # Грузится ВМЕСТЕ со старым CERT, чтобы на время перехода доверять обоим PKI.
+  # По умолчанию пусто; реальный PEM задать в CI/CD Variables проекта (тип Variable, multiline),
+  # получив его через: openssl s_client -connect repository.transcapital.com:443 -showcerts
+  CERT_NEW: ""
 
 cache:
   paths:
@@ -97,14 +102,16 @@ stages:
   image:
     name: $JDK_JAVA_IMAGE
   before_script:
-    - echo "$CERT" > ca-cert.pem
+    # Оба бандла (старый CERT + новый CERT_NEW) в один файл — на время перехода доверяем обоим PKI.
+    - printf '%s\n%s\n' "$CERT" "$CERT_NEW" > ca-cert.pem
     # keytool -import из многосертификатного PEM берёт только первый cert (терялся TCB-ENT-CA).
     # Режем bundle на отдельные сертификаты и импортируем каждый под своим alias (busybox-safe awk).
+    # Пустой/битый блок (напр. незаполненный CERT_NEW) keytool молча пропускает — || true.
     - |
       awk '/-----BEGIN CERTIFICATE-----/{n++} n{print > ("corp-ca-" n ".crt")}' ca-cert.pem
       for c in corp-ca-*.crt; do
         keytool -keystore "$CA_CERT_PATH" -storepass changeit -noprompt \
-                -import -alias "${c%.crt}" -file "$c"
+                -import -alias "${c%.crt}" -file "$c" || echo "WARN: пропущен невалидный cert $c"
       done
     - keytool -keystore "$CA_CERT_PATH" -storepass changeit -list | grep -i corp-ca || true
 
@@ -182,7 +189,7 @@ docker_build:
     - export DOCKER_BUILDKIT=0
     - export COMPOSE_DOCKER_CLI_BUILD=0
     - echo $IMAGE_REGISTRY_PASSWORD | docker login -u $IMAGE_REGISTRY_USERNAME --password-stdin $IMAGE_REGISTRY
-    - mkdir -p certs && echo "$CERT" > certs/tkbbank-ca.crt      # корп-CA в рантайм-контекст (Dockerfile COPY certs/)
+    - mkdir -p certs && printf '%s\n%s\n' "$CERT" "$CERT_NEW" > certs/tkbbank-ca.crt   # оба корп-CA в рантайм-контекст (Dockerfile COPY certs/)
     - cat certs/tkbbank-ca.crt
   script:
     - export DATE="$(date +%Y%m%d%H%M)"
