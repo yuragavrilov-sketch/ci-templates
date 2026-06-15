@@ -159,9 +159,16 @@ container_scan:
   rules:
     - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
       changes: ["Dockerfile", "src/**/*", "pom.xml"]
-  # Закрытый контур: trivy-db с ghcr недоступна → не блокируем деплой сканом.
+  # Закрытый контур: trivy-db с ghcr недоступна/медленна → не блокируем деплой сканом.
   # PROD-харденинг: зеркалить DB в Harbor (inputs trivy_db_repository/_java_) и снять allow_failure.
   allow_failure: true
+  variables:
+    # Кэш БД Trivy между прогонами (внутри проекта, чтобы GitLab cache его подхватил) —
+    # иначе vuln/Java DB качаются заново каждый раз (минуты).
+    TRIVY_CACHE_DIR: ".trivycache"
+  cache:
+    key: trivy-db
+    paths: [".trivycache"]
   script:
     # Harbor приватный + внутренний CA: креды из HARBOR_DOCKER_CONFIG (pull) + --insecure (TLS,
     # accepted-for-test, как Kaniko/helm). PROD-харденинг: примонтировать корп-CA.
@@ -175,8 +182,11 @@ container_scan:
           *)   printf '%s' "$HARBOR_DOCKER_CONFIG" | base64 -d > "$HOME/.docker/config.json" ;;
         esac
       fi
+    # --scanners vuln: только уязвимости (без secret-scan, который обходит весь ФС и упирался в
+    # таймаут). --timeout с запасом на первую (некэшированную) загрузку БД.
     - >
-      trivy image --exit-code 1 --severity HIGH,CRITICAL --no-progress --insecure
+      trivy image --scanners vuln --timeout 20m --exit-code 1 --severity HIGH,CRITICAL
+      --no-progress --insecure
       --db-repository "$[[ inputs.trivy_db_repository ]]"
       --java-db-repository "$[[ inputs.trivy_java_db_repository ]]"
       "$IMAGE:$IMAGE_TAG"

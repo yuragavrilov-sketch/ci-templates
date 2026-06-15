@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+## [1.1.10]
+
+### Changed
+- `java-spring`: `container_scan` ускорен — `--scanners vuln` (без secret-scan, который обходил весь
+  ФС и упирался в таймаут), `--timeout 20m`, кэш БД Trivy `.trivycache/` между прогонами (GitLab
+  cache) — БД не перекачивается каждый раз. Зеркало БД в Harbor (inputs) делает и первый прогон
+  быстрым.
+
 ## [1.1.9]
 
 ### Changed
