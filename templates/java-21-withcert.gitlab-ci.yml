@@ -1,0 +1,271 @@
+# Исправленная версия legacy-шаблона tkbpay/microservices/template/.gitlab-ci-java-21-withcert.yml
+#
+# Что изменено относительно оригинала (под переезд Nexus на repository.transcapital.com):
+#   1. keytool -import из многосертификатного PEM брал ТОЛЬКО первый cert (терялся TCB-ENT-CA).
+#      Теперь bundle режется awk и каждый сертификат импортируется под своим alias.
+#      Затронуто: .maven_runner.before_script и mvn_package.before_script.
+#   2. ВАЖНО (не в этом файле): переменную CERT нужно обновить актуальной цепочкой,
+#      что реально подписывает repository.transcapital.com. Текущий бандл — 2048-битные
+#      TCB-Root-CA (2010, SHA1) + TCB-ENT-CA (2017), а сервер отдаёт подпись 4096 бит
+#      (ошибка "Bad signature length: got 512 but was expecting 256"). Забрать корень:
+#        echo | openssl s_client -connect repository.transcapital.com:443 \
+#          -servername repository.transcapital.com -showcerts
+#
+# Это REFERENCE-копия в orchestration-репо PAY_ALL. Боевой файл лежит в отдельном
+# GitLab-проекте tkbpay/microservices/template — правки переносить туда.
+
+variables:
+  IMAGE_REGISTRY: harbor.online.tkbbank.ru
+  IMAGE_REGISTRY_PROJECT: tkbpay
+  REVISION: 1.0.0-SNAPSHOT
+  MAVEN_CLI_OPTS: "-s settings.xml --batch-mode"
+  MAVEN_OPTS: "-Dmaven.repo.local=$CI_PROJECT_DIR/.m2/repository"
+#  NOTIFICATION_TELEGRAM_BOT_TOKEN: $NOTIFICATION_TELEGRAM_BOT_TOKEN
+#  NOTIFICATION_URL: https://api.telegram.org/bot$NOTIFICATION_TELEGRAM_BOT_TOKEN/sendMessage
+#  NOTIFICATION_CHAT_ID: $NOTIFICATION_CHAT_ID
+  SPRING_PROFILES_ACTIVE: "integration-test"
+  JDK_JAVA_IMAGE: harbor.online.tkbbank.ru/oris-k8s/liberica-openjdk-alpine:21.0.9-maven
+  CA_CERT_PATH: /usr/lib/jvm/jdk-21.0.9-bellsoft-x86_64/lib/security/cacerts
+  # ВНИМАНИЕ: обновить на актуальную (4096-бит) цепочку repository.transcapital.com — см. шапку файла.
+  CERT: |
+    -----BEGIN CERTIFICATE-----
+    MIIDBzCCAe+gAwIBAgIQfo1LoKRqNpdOcZd+CyIH8TANBgkqhkiG9w0BAQUFADAW
+    MRQwEgYDVQQDEwtUQ0ItUm9vdC1DQTAeFw0xMDA1MjAxNTU4MzZaFw0zMDA1MjAx
+    NjA3NTVaMBYxFDASBgNVBAMTC1RDQi1Sb290LUNBMIIBIjANBgkqhkiG9w0BAQEF
+    AAOCAQ8AMIIBCgKCAQEAjZ3xeAZBk3ux7JpDt2ON/TXOOjyoKzPk6zV9GBLP047g
+    eK5I+UlGQDTG+FZKWNAg/qdflyR9bRCmABmkRu7jG2AEOoWgqcdc9d6IKccr+kRQ
+    zmRzMVYLEyE8VnhbvvBA9YeqG4Iw+LYvtpf4KBAvvVomWng5cPN0+/a8SGRx0W3f
+    gEaGtXCnjYYzFxYAvukzJ1f+qFGgUuePnb32bOxxgltww6gj+f0loYVdRmNjXdqp
+    P6m9nrjM4IqzWjoUmtbEdnDZMbsdZfLZrVAJ8VDO1zmdvSbbXyNVlsFJDCvY7xPw
+    ap5FvpijBftlQ3D5oaq0Im4eyVSrlqs4JdFykXDqbwIDAQABo1EwTzALBgNVHQ8E
+    BAMCAYYwDwYDVR0TAQH/BAUwAwEB/zAdBgNVHQ4EFgQUyMGBNLa72HZ/xGSh5B+D
+    D15OxRQwEAYJKwYBBAGCNxUBBAMCAQAwDQYJKoZIhvcNAQEFBQADggEBABqGml7I
+    B8TqDr2VDOuXnpfTxxni8lUbr8jua0AdQZxW6nDr/UiqcUEMReviaPrd7TAKSA5b
+    hxAyRMyW8+BPmx64WgWl1Ywm6fT86TH3IEPhI+KhQpHpvsxmbX/K26fF1WJEVzyV
+    wKR5E3bF8f/GGISbgBZdHGDmwSerOnKBCS5LkOz45Huz9EJ+VlNopIODGkRSa0Zl
+    sqX0MfyX5gaMtXdBbaWSPkJhfmVjLFhNLzJrGee41Alw3nrPW+TdRD9hBGQXl1hj
+    KOlIqMDCm3eZkMMTLs6CcSF+zcrhMdPQJTk2Ug7nHHUs0kpOvhEO+SMyDAemyiZD
+    +L9/bXHdOAm536o=
+    -----END CERTIFICATE-----
+    -----BEGIN CERTIFICATE-----
+    MIIEczCCA1ugAwIBAgITaQAAAB2nZm3pTPT9DgAAAAAAHTANBgkqhkiG9w0BAQsF
+    ADAWMRQwEgYDVQQDEwtUQ0ItUm9vdC1DQTAeFw0xNzEyMTcxMTQ0MDhaFw0yNzEy
+    MTcxMTU0MDhaMFwxEzARBgoJkiaJk/IsZAEZFgNjb20xHDAaBgoJkiaJk/IsZAEZ
+    Fgx0cmFuc2NhcGl0YWwxEjAQBgoJkiaJk/IsZAEZFgJhZDETMBEGA1UEAxMKVENC
+    LUVOVC1DQTCCASIwDQYJKoZIhvcNAQEBBQADggEPADCCAQoCggEBAOYhrZmiv8Mk
+    8rjanMHAniOq/HrzujFvfKcg2XVDufBzFGmELtZbg8ecZtixQo/XR/9Vqyvrb/nc
+    BwPOP1Z+3sFgsOet+WAxf6h92ayzawJQp866X0tNCZBjPwg5+Fqzg43IE9nXv51x
+    oHOB8RLaRyjlGRgny+lh4MnzboC7orGaeh2hnrm9O92yDcboYkQD1PKZnjQUBnPO
+    MpswQ4ExS6Z9hm0GcPdJI4FqN0lAtkfgHDaxlLejr9ey8xUBEEy0DF9B1NkS1kFx
+    90oIzMeHFcaf0fmgdd0ivrDZwdICDGx7jyphU83kx/djmG6cqToRQn+Uc9nlHqag
+    Ot8MTVcFJpECAwEAAaOCAXIwggFuMBAGCSsGAQQBgjcVAQQDAgEBMCMGCSsGAQQB
+    gjcVAgQWBBQC5KhFc9w+3TuIWD6T8z4kN7/opjAdBgNVHQ4EFgQUftx56vkf2f/m
+    Ig0jGkYsmLskT90wGQYJKwYBBAGCNxQCBAweCgBTAHUAYgBDAEEwCwYDVR0PBAQD
+    AgGGMA8GA1UdEwEB/wQFMAMBAf8wHwYDVR0jBBgwFoAUyMGBNLa72HZ/xGSh5B+D
+    D15OxRQwSgYDVR0fBEMwQTA/oD2gO4Y5aHR0cDovL2NkcC5hZC50cmFuc2NhcGl0
+    YWwuY29tL0NlcnRFbnJvbGwvVENCLVJvb3QtQ0EuY3JsMHAGCCsGAQUFBwEBBGQw
+    YjBgBggrBgEFBQcwAoZUaHR0cDovL2FpYS5hZC50cmFuc2NhcGl0YWwuY29tL0Nl
+    cnRFbnJvbGwvdi1yb290LWNhLnRyYW5zY2FwaXRhbC5jb21fVENCLVJvb3QtQ0Eu
+    Y3J0MA0GCSqGSIb3DQEBCwUAA4IBAQBpJtkyD8Rp9/qTXui91OocgE5wlXuSSfqO
+    FBbGwka1yaQ/8ycdK7QhA1Bs/P941nO2zgpi5wA6DXRedhF6zK9ZhywCmj3TE+pm
+    +umc8oTEuelfs3BYEL+yrBkbZP4SMOV3NA1QyFI3Rn2f4n0qsiehWbkG053uFqw+
+    ZrBVvX4wb6z7ZyiPn3CinjnNhB+Yse5RDcaCqVW1xHGgqjJDVQA3xXIrFCYClrHR
+    BYBxI5kwU/NFuXix9rsaEXgFfuXDs+KgVJdAE65pH1T5bKEW+mXWob1tw2QmbyqM
+    E1Hrrtwt21Ds00ky2q3vplDltZQc2J6jHih3s9144a4kGWefAxlH
+    -----END CERTIFICATE-----
+
+cache:
+  paths:
+    - .m2/repository
+
+.runner:template:
+  tags:
+    - DockerWormHoleGroup
+
+stages:
+  - mvn_compile
+  - mvn_test
+  - mvn_package
+  - mvn_deploy
+  - docker_build
+  - docker_tag
+  - helm_deploy
+#  - notify_failure
+
+.maven_runner:
+  extends: .runner:template
+  image:
+    name: $JDK_JAVA_IMAGE
+  before_script:
+    - echo "$CERT" > ca-cert.pem
+    # keytool -import из многосертификатного PEM берёт только первый cert (терялся TCB-ENT-CA).
+    # Режем bundle на отдельные сертификаты и импортируем каждый под своим alias (busybox-safe awk).
+    - |
+      awk '/-----BEGIN CERTIFICATE-----/{n++} n{print > ("corp-ca-" n ".crt")}' ca-cert.pem
+      for c in corp-ca-*.crt; do
+        keytool -keystore "$CA_CERT_PATH" -storepass changeit -noprompt \
+                -import -alias "${c%.crt}" -file "$c"
+      done
+    - keytool -keystore "$CA_CERT_PATH" -storepass changeit -list | grep -i corp-ca || true
+
+.docker_runner:
+  extends: .runner:template
+  image:
+    name: $IMAGE_REGISTRY/library/docker:25.0.3
+  services:
+    - name: $IMAGE_REGISTRY/library/docker:25.0.3-dind
+      alias: "docker"
+      command: [ "--tls=false", "--insecure-registry=harbor.online.tkbbank.ru" ]
+  variables:
+    DOCKER_HOST: "tcp://docker:2375"
+    DOCKER_TLS_CERTDIR: ""
+    DOCKER_DRIVER: overlay2
+
+mvn_compile:
+  extends: .maven_runner
+  stage: mvn_compile
+  script:
+    - mvn $MAVEN_CLI_OPTS compile
+
+mvn_test:
+  extends: .maven_runner
+  stage: mvn_test
+  variables:
+    DOCKER_HOST: "tcp://docker:2375"
+    DOCKER_TLS_CERTDIR: ""
+    DOCKER_DRIVER: overlay2
+  services:
+    - name: $IMAGE_REGISTRY/library/docker:25.0.3
+      alias: "docker"
+      command: ["--tls=false", "--insecure-registry=harbor.online.tkbbank.ru"]
+  script:
+    - mvn $MAVEN_CLI_OPTS test
+
+mvn_package:
+  extends: .maven_runner
+  stage: mvn_package
+  # only:
+  #   - master
+  # before_script намеренно НЕ переопределяется — используется родительский из .maven_runner
+  # (он импортирует все certs корректно). Раньше здесь был дубль с тем же багом keytool.
+  script:
+    - echo $REVISION
+    - mvn $MAVEN_CLI_OPTS package -Drevision=$REVISION -Dmaven.test.skip=true
+  rules:
+    - if: $CI_COMMIT_BRANCH == "master" || $CI_COMMIT_BRANCH == "develop" || $CI_COMMIT_BRANCH =~ /^feature\/.*/ || $CI_COMMIT_BRANCH == "bug/TKBPAY-5679"
+
+mvn_deploy:
+  extends: .maven_runner
+  stage: mvn_deploy
+#  only:
+#    - master
+  script:
+    - mvn $MAVEN_CLI_OPTS deploy -Drevision=$REVISION -Dmaven.test.skip=true
+  artifacts:
+    paths:
+      - deploy
+    expire_in: 30 mins
+  rules:
+    - if: $CI_COMMIT_BRANCH == "master" || $CI_COMMIT_BRANCH == "develop" || $CI_COMMIT_BRANCH =~ /^feature\/.*/ || $CI_COMMIT_BRANCH == "bug/TKBPAY-5679"
+
+docker_build:
+  extends: .docker_runner
+  stage: docker_build
+  # only:
+  #   - master
+  dependencies:
+    - mvn_deploy
+  variables:
+    IMAGE_NAME: $IMAGE_REGISTRY/$IMAGE_REGISTRY_PROJECT/$CI_PROJECT_NAME
+    IMAGE_TAG: $REVISION-$CI_COMMIT_SHORT_SHA
+  before_script:
+    - export DOCKER_BUILDKIT=0
+    - export COMPOSE_DOCKER_CLI_BUILD=0
+    - echo $IMAGE_REGISTRY_PASSWORD | docker login -u $IMAGE_REGISTRY_USERNAME --password-stdin $IMAGE_REGISTRY
+    - mkdir -p certs && echo "$CERT" > certs/tkbbank-ca.crt      # корп-CA в рантайм-контекст (Dockerfile COPY certs/)
+    - cat certs/tkbbank-ca.crt
+  script:
+    - export DATE="$(date +%Y%m%d%H%M)"
+    - docker build -t $IMAGE_NAME:$IMAGE_TAG -t $IMAGE_NAME:$IMAGE_TAG-$DATE -t $IMAGE_NAME:latest .
+    - docker push $IMAGE_NAME:$IMAGE_TAG
+    - docker push $IMAGE_NAME:$IMAGE_TAG-$DATE
+    #- docker push $IMAGE_NAME:latest
+    - docker image rm $IMAGE_NAME:$IMAGE_TAG
+    - docker image rm $IMAGE_NAME:$IMAGE_TAG-$DATE
+    - docker image rm $IMAGE_NAME:latest
+    # docker image don't have curl inside, so we use wget
+    # %0A is working TG strings delimiter (\n is not work)
+    # %23 is a # in UTF-8
+    #- wget -O - --post-data "chat_id=$NOTIFICATION_CHAT_ID&disable_web_page_preview=1&parse_mode=HTML&text=
+    #  <b>Build status:</b> ✅
+    #  %0A<b>Project:</b> $CI_PROJECT_NAME
+    #  %0A<b>Docker image:</b> $IMAGE_NAME:$IMAGE_TAG
+    #  %0A<b>URL:</b> $CI_PROJECT_URL/pipelines/$CI_PIPELINE_ID
+    #  %0A<b>Branch:</b> $CI_COMMIT_REF_SLUG
+    #  %0A<b>Triggered by:</b> $GITLAB_USER_NAME
+    #  %0A%0A%23build %23success %23$CI_PROJECT_NAME %23$CI_COMMIT_REF_SLUG"
+    #  $NOTIFICATION_URL
+  rules:
+    - if: $CI_COMMIT_BRANCH == "master" || $CI_COMMIT_BRANCH == "develop" || $CI_COMMIT_BRANCH =~ /^feature\/.*/ || $CI_COMMIT_BRANCH == "bug/TKBPAY-5679"
+
+docker_tag:
+  extends: .docker_runner
+  stage: docker_tag
+  variables:
+    IMAGE_NAME: $IMAGE_REGISTRY/$IMAGE_REGISTRY_PROJECT/$CI_PROJECT_NAME
+    IMAGE_TAG: $CI_COMMIT_TAG-$CI_COMMIT_SHORT_SHA
+  before_script:
+    - export DOCKER_BUILDKIT=0
+    - export COMPOSE_DOCKER_CLI_BUILD=0
+    - echo $IMAGE_REGISTRY_PASSWORD | docker login -u $IMAGE_REGISTRY_USERNAME --password-stdin $IMAGE_REGISTRY
+  script:
+    - docker pull $IMAGE_NAME:$IMAGE_TAG
+    - docker tag  $IMAGE_NAME:$IMAGE_TAG $IMAGE_NAME:$CI_COMMIT_TAG
+    - docker push $IMAGE_NAME:$CI_COMMIT_TAG
+    - docker image rm $IMAGE_NAME:$CI_COMMIT_TAG
+    - docker image rm $IMAGE_NAME:$IMAGE_TAG
+    #- wget -O - --post-data "chat_id=$NOTIFICATION_CHAT_ID&disable_web_page_preview=1&parse_mode=HTML&text=
+    #  <b>Release status:</b> ✅
+    #  %0A<b>Project:</b> $CI_PROJECT_NAME
+    #  %0A<b>Source docker image:</b> $IMAGE_NAME:$IMAGE_TAG
+    #  %0A<b>Target docker image:</b> $IMAGE_NAME:$CI_COMMIT_TAG
+    #  %0A<b>URL:</b> $CI_PROJECT_URL/pipelines/$CI_PIPELINE_ID
+    #  %0A<b>Tag:</b> $CI_COMMIT_TAG
+    #  %0A<b>Triggered by:</b> $GITLAB_USER_NAME
+    #  %0A%0A%23release %23success %23$CI_PROJECT_NAME %23$CI_COMMIT_TAG"
+    #  $NOTIFICATION_URL
+  rules:
+    - if: $CI_COMMIT_TAG
+
+helm_deploy:
+  extends: .docker_runner
+  stage: helm_deploy
+  variables:
+    IMAGE_NAME: $IMAGE_REGISTRY/$IMAGE_REGISTRY_PROJECT/$CI_PROJECT_NAME
+    IMAGE_TAG: $REVISION-$CI_COMMIT_SHORT_SHA
+    ENV: preprod
+  script:
+    - K8S_CONFIG=K8S_CONFIG_${ENV}
+    - chmod 0400 $(echo "${!K8S_CONFIG}")
+    - export KUBECONFIG=$(echo "${!K8S_CONFIG}")
+    - helm repo add kubernetes --insecure-skip-tls-verify=true $CHART_REPO
+    - helm upgrade $CI_PROJECT_NAME --install --insecure-skip-tls-verify=true --version=$CHART_VERSION $CHART_NAME --set image.tag=$IMAGE_TAG -f helm/values-$ENV.yaml --namespace=$NAMESPACE
+  when: manual
+  allow_failure: false
+  rules:
+    - if: $CI_COMMIT_BRANCH == "master" || $CI_COMMIT_BRANCH == "develop" || $CI_COMMIT_BRANCH =~ /^feature\/.*/ || $CI_COMMIT_BRANCH == "bug/TKBPAY-5679"
+
+#notify_failure:
+#  extends: .runner:template
+#  stage: notify_failure
+#  image: $IMAGE_REGISTRY/library/docker:25.0.3
+#  script:
+#    - wget -O - --post-data "chat_id=$NOTIFICATION_CHAT_ID&disable_web_page_preview=1&parse_mode=HTML&text=
+#      <b>Pipeline status:</b> ❌
+#      %0A<b>Project:</b> $CI_PROJECT_NAME
+#      %0A<b>URL:</b> $CI_PROJECT_URL/pipelines/$CI_PIPELINE_ID
+#      %0A<b>Branch:</b> $CI_COMMIT_REF_SLUG
+#      %0A<b>Triggered by:</b> $GITLAB_USER_NAME
+#      %0A%0A%23failure %23$CI_PROJECT_NAME %23$CI_COMMIT_REF_SLUG"
+#      $NOTIFICATION_URL
+#  when: on_failure
