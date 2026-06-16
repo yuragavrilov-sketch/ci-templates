@@ -90,7 +90,11 @@ test:
   <<: *mvn_cache
   extends: .rules_mr_main
   script:
-    - mvn -B verify
+    # `mvn package` (НЕ verify): прогоняет surefire (unit-тесты *Test/*Tests) и собирает boot-jar,
+    # но НЕ запускает failsafe (integration-test фаза). Так test-стадия не требует Docker-демона,
+    # которого нет на корп-раннерах (Kaniko/wormhole). Интеграционные тесты (*IT, Testcontainers)
+    # вынесены в отдельный manual-job `integration_test` ниже.
+    - mvn -B package
   artifacts:
     when: always
     # spring-boot-maven-plugin repackage кладёт boot-jar в deploy/ (см. pom outputDirectory) —
@@ -98,6 +102,29 @@ test:
     paths: ["deploy/*.jar"]
     reports:
       junit: "target/surefire-reports/TEST-*.xml"
+
+# Интеграционные тесты (*IT: Testcontainers / @JdbcTest) требуют Docker-демона, которого нет
+# на корп-раннерах. Вынесены из основного `test` в opt-in manual-job: запускать на
+# Docker-capable раннере или локально (`mvn verify`). manual + allow_failure — никогда не блокирует
+# пайплайн. Если в сервисе нет *IT, job просто прогонит verify без интеграционной фазы.
+integration_test:
+  stage: test
+  image: $[[ inputs.maven_image ]]
+  <<: *mvn_cache
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+      when: manual
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+      when: manual
+  allow_failure: true
+  script:
+    - mvn -B verify
+  artifacts:
+    when: always
+    reports:
+      junit:
+        - "target/surefire-reports/TEST-*.xml"
+        - "target/failsafe-reports/TEST-*.xml"
 
 package:
   stage: package
