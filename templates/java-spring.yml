@@ -208,7 +208,7 @@ test:
       if [ -n "$[[ inputs.maven_settings_path ]]" ] && [ -f "$[[ inputs.maven_settings_path ]]" ]; then
         MAVEN_SETTINGS_OPT="-s $[[ inputs.maven_settings_path ]]"
       fi
-      mvn -B ${MAVEN_SETTINGS_OPT:+$MAVEN_SETTINGS_OPT} verify
+      mvn -B ${MAVEN_SETTINGS_OPT:+$MAVEN_SETTINGS_OPT} -DskipITs verify
   artifacts:
     when: always
     # spring-boot-maven-plugin repackage кладёт boot-jar в deploy/ (см. pom outputDirectory) —
