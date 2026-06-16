@@ -3,38 +3,152 @@
 # путь резолвится относительно репозитория ci-templates.
 
 .helm_deploy:
-  image: dtzar/helm-kubectl:3.14
+  image: harbor.online.tkbbank.ru/devops/dtzar/helm-kubectl:3.14
   variables:
     CHART_REPO: "https://harbor.online.tkbbank.ru/chartrepo/kubernetes"
     CHART_NAME: "kubernetes/java"
     CHART_VERSION: "0.4.0"
-    NAMESPACE: "test"
-    VALUES_PATH: "helm/values-test.yaml"
     IMAGE_TAG: "$CI_COMMIT_SHORT_SHA"
   script:
-    - K8S_CONFIG=K8S_CONFIG_${ENV}
-    - chmod 0400 $(echo "${!K8S_CONFIG}")
-    - export KUBECONFIG=$(echo "${!K8S_CONFIG}")
-    - helm repo add kubernetes --insecure-skip-tls-verify=true $CHART_REPO
-    - >
-      helm upgrade $RELEASE_NAME --install --insecure-skip-tls-verify=true
-      --version=$CHART_VERSION $CHART_NAME
-      --set image.tag=$IMAGE_TAG -f $VALUES_PATH --namespace=$NAMESPACE
-      --wait --timeout 5m
+    - |
+      append_corp_ca_var() {
+        var_name="$1"
+        target="$2"
+        value="$(printenv "$var_name" 2>/dev/null || true)"
+        [ -z "$value" ] && return 0
+        if [ -f "$value" ]; then
+          cat "$value" >> "$target"
+          printf '\n' >> "$target"
+          return 0
+        fi
+        case "$value" in
+          *BEGIN*CERTIFICATE*) printf '%s\n' "$value" >> "$target" ;;
+          *) printf '%s' "$value" | base64 -d >> "$target"; printf '\n' >> "$target" ;;
+        esac
+      }
+      setup_corp_ca_bundle() {
+        target="$1"
+        mode="${2:-auto}"
+        : > "$target"
+        append_corp_ca_var CORP_CA_CERT "$target"
+        append_corp_ca_var CERT "$target"
+        append_corp_ca_var CERT_NEW "$target"
+        if grep -q "BEGIN CERTIFICATE" "$target"; then
+          export CORP_CA_BUNDLE="$target"
+          return 0
+        fi
+        export CORP_CA_BUNDLE=""
+        if [ "$mode" = "true" ]; then
+          echo "ERROR: corporate CA is enabled, but CORP_CA_CERT/CERT/CERT_NEW is empty or invalid" >&2
+          return 1
+        fi
+        echo "WARN: no corporate CA bundle found; continuing without CA injection" >&2
+      }
+      install_corp_ca_system() {
+        bundle="$1"
+        [ -n "$bundle" ] || return 0
+        if [ -d /usr/local/share/ca-certificates ] && command -v update-ca-certificates >/dev/null 2>&1; then
+          cp "$bundle" /usr/local/share/ca-certificates/corp-ca.crt
+          update-ca-certificates || true
+        fi
+        if [ -w /etc/ssl/certs/ca-certificates.crt ]; then
+          cat "$bundle" >> /etc/ssl/certs/ca-certificates.crt
+        fi
+      }
+      setup_corp_ca_bundle "$CI_PROJECT_DIR/.corp-ca.pem" "${CORP_CA_ENABLED:-auto}"
+      install_corp_ca_system "$CORP_CA_BUNDLE"
+    - |
+      : "${ENV:?ENV is required}"
+      : "${RELEASE_NAME:?RELEASE_NAME is required}"
+      : "${NAMESPACE:?NAMESPACE is required}"
+      : "${VALUES_PATH:?VALUES_PATH is required}"
+      : "${CHART_REPO:?CHART_REPO is required}"
+      : "${CHART_NAME:?CHART_NAME is required}"
+      : "${CHART_VERSION:?CHART_VERSION is required}"
+      : "${IMAGE_TAG:?IMAGE_TAG is required}"
+      K8S_CONFIG=K8S_CONFIG_${ENV}
+      KUBECONFIG_PATH="$(eval "printf '%s' \"\${$K8S_CONFIG:-}\"")"
+      [ -n "$KUBECONFIG_PATH" ] || { echo "ERROR: $K8S_CONFIG is required" >&2; exit 1; }
+      chmod 0400 "$KUBECONFIG_PATH"
+      export KUBECONFIG="$KUBECONFIG_PATH"
+    - |
+      HELM_TLS_FLAGS=""
+      if [ "${HELM_INSECURE_SKIP_TLS_VERIFY:-false}" = "true" ]; then
+        HELM_TLS_FLAGS="--insecure-skip-tls-verify"
+      fi
+      helm repo add kubernetes $HELM_TLS_FLAGS "$CHART_REPO"
+      helm upgrade "$RELEASE_NAME" --install $HELM_TLS_FLAGS \
+        --version="$CHART_VERSION" "$CHART_NAME" \
+        --set image.tag="$IMAGE_TAG" -f "$VALUES_PATH" --namespace="$NAMESPACE" \
+        --wait --timeout 5m
 
 .smoke:
-  image: dtzar/helm-kubectl:3.14
+  image: harbor.online.tkbbank.ru/devops/dtzar/helm-kubectl:3.14
   variables:
-    NAMESPACE: "test"
     HEALTH_PATH: "/actuator/health"
     SERVICE_PORT: "8080"
   script:
-    - K8S_CONFIG=K8S_CONFIG_${ENV}
-    - export KUBECONFIG=$(echo "${!K8S_CONFIG}")
+    - |
+      append_corp_ca_var() {
+        var_name="$1"
+        target="$2"
+        value="$(printenv "$var_name" 2>/dev/null || true)"
+        [ -z "$value" ] && return 0
+        if [ -f "$value" ]; then
+          cat "$value" >> "$target"
+          printf '\n' >> "$target"
+          return 0
+        fi
+        case "$value" in
+          *BEGIN*CERTIFICATE*) printf '%s\n' "$value" >> "$target" ;;
+          *) printf '%s' "$value" | base64 -d >> "$target"; printf '\n' >> "$target" ;;
+        esac
+      }
+      setup_corp_ca_bundle() {
+        target="$1"
+        mode="${2:-auto}"
+        : > "$target"
+        append_corp_ca_var CORP_CA_CERT "$target"
+        append_corp_ca_var CERT "$target"
+        append_corp_ca_var CERT_NEW "$target"
+        if grep -q "BEGIN CERTIFICATE" "$target"; then
+          export CORP_CA_BUNDLE="$target"
+          return 0
+        fi
+        export CORP_CA_BUNDLE=""
+        if [ "$mode" = "true" ]; then
+          echo "ERROR: corporate CA is enabled, but CORP_CA_CERT/CERT/CERT_NEW is empty or invalid" >&2
+          return 1
+        fi
+        echo "WARN: no corporate CA bundle found; continuing without CA injection" >&2
+      }
+      install_corp_ca_system() {
+        bundle="$1"
+        [ -n "$bundle" ] || return 0
+        if [ -d /usr/local/share/ca-certificates ] && command -v update-ca-certificates >/dev/null 2>&1; then
+          cp "$bundle" /usr/local/share/ca-certificates/corp-ca.crt
+          update-ca-certificates || true
+        fi
+        if [ -w /etc/ssl/certs/ca-certificates.crt ]; then
+          cat "$bundle" >> /etc/ssl/certs/ca-certificates.crt
+        fi
+      }
+      setup_corp_ca_bundle "$CI_PROJECT_DIR/.corp-ca.pem" "${CORP_CA_ENABLED:-auto}"
+      install_corp_ca_system "$CORP_CA_BUNDLE"
+    - |
+      : "${ENV:?ENV is required}"
+      : "${RELEASE_NAME:?RELEASE_NAME is required}"
+      : "${NAMESPACE:?NAMESPACE is required}"
+      : "${HEALTH_PATH:?HEALTH_PATH is required}"
+      : "${SERVICE_PORT:?SERVICE_PORT is required}"
+      K8S_CONFIG=K8S_CONFIG_${ENV}
+      KUBECONFIG_PATH="$(eval "printf '%s' \"\${$K8S_CONFIG:-}\"")"
+      [ -n "$KUBECONFIG_PATH" ] || { echo "ERROR: $K8S_CONFIG is required" >&2; exit 1; }
+      export KUBECONFIG="$KUBECONFIG_PATH"
     - kubectl rollout status deploy/$RELEASE_NAME -n $NAMESPACE --timeout=120s
     # Базовый health-чек (200). При неверной Vault-политике сервис не стартует и rollout status
     # выше уже упадёт. Опциональная строгая проверка vault-компонента — см. DEVOPS-CHECKLIST.md §5.
     - >
       kubectl run smoke-$CI_JOB_ID --rm -i --restart=Never -n $NAMESPACE
-      --image=curlimages/curl:8.7.1 --
+      --image=harbor.online.tkbbank.ru/devops/curlimages/curl:8.7.1 --
       curl -fsS "http://$RELEASE_NAME:$SERVICE_PORT$HEALTH_PATH"

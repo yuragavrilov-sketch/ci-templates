@@ -28,17 +28,31 @@ include:
 | `release_name` | — (обязателен) | имя Helm-релиза (DNS-1123) |
 | `with_cert` | `false` | подмешивать корпоративный CA |
 | `values_path` | `helm/values-test.yaml` | путь к values |
-| `maven_image` | `maven:3.9-eclipse-temurin-21` | образ сборки |
+| `maven_image` | `harbor.online.tkbbank.ru/library/maven:3.9-eclipse-temurin-21` | образ сборки |
+| `maven_settings_path` | `settings.xml` | Maven settings для внутреннего Nexus, если файл есть в репо |
 | `chart_repo` | Harbor chartrepo | репозиторий чарта |
 | `chart_name` | `kubernetes/java` | имя чарта |
 | `chart_version` | `0.4.0` | версия чарта |
 | `namespace` | `test` | k8s namespace |
 | `image_registry` | `harbor.online.tkbbank.ru` | Docker registry host (Harbor) |
 | `image_registry_project` | `tkbpay` | проект реестра под образы |
+| `corp_ca_enabled` | `true` | устанавливать corp CA в trust store job'ов |
+| `kaniko_insecure_skip_tls_verify` / `trivy_insecure` / `helm_insecure_skip_tls_verify` | `false` | аварийный fallback, если CA ещё не настроен |
 
 `IMAGE` = `<image_registry>/<image_registry_project>/$CI_PROJECT_NAME`. Push в Harbor требует
 креды в CI/CD-переменной группы **`HARBOR_DOCKER_CONFIG`** (docker `config.json`) — `package`
 пишет их в `/kaniko/.docker/config.json`; в код секрет не выносится.
+`container_scan` использует тот же `HARBOR_DOCKER_CONFIG` для pull приватного образа сервиса и
+запускается в offline-режиме на `harbor.online.tkbbank.ru/devops/pay-trivy-offline:latest` без
+скачивания Trivy DB из интернета.
+
+Корпоративный CA задаётся в CI/CD variable `CORP_CA_CERT` (рекомендуемо): File variable, multiline PEM
+или base64 от PEM bundle. Для совместимости пайплайн также читает `CERT` и `CERT_NEW`.
+Этот bundle устанавливается в:
+- JVM truststore Maven job'ов (`validate`/`test`) для внутреннего Nexus;
+- Kaniko trust store для push/pull Harbor без `--skip-tls-verify`;
+- Trivy/system trust store для pull приватного Harbor image;
+- Helm/kubectl job'ы для chart repo и Kubernetes API на корпоративных сертификатах.
 
 ## Компонент `node-spa`
 
@@ -58,7 +72,7 @@ include:
 |-------|--------------|------------|
 | `release_name` | — (обязателен) | имя Helm-релиза (DNS-1123) |
 | `values_path` | `helm/values-test.yaml` | путь к values |
-| `node_image` | `node:22-alpine` | образ сборки |
+| `node_image` | `harbor.online.tkbbank.ru/library/node:22-alpine` | образ сборки |
 | `chart_name` | `kubernetes/web` | web/nginx-чарт (не `kubernetes/java`) |
 | `chart_version` | `0.1.0` | версия web-чарта |
 | `namespace` | `test` | k8s namespace |
@@ -80,8 +94,13 @@ deploy:test(manual) → smoke (`GET /`, порт 80).
 
 - `HARBOR_DOCKER_CONFIG` — docker `config.json`/robot-creds Harbor для Kaniko-push.
   (Хост/проект реестра — это inputs компонента `image_registry`/`image_registry_project`.)
+- `CORP_CA_CERT` — корпоративный CA bundle для Nexus/Harbor/Kubernetes (File, multiline PEM или base64).
+  Legacy fallback: `CERT` и `CERT_NEW`.
 - `K8S_CONFIG_test` — kubeconfig (file, protected).
-- Runner'ы должны уметь запускать Kaniko (`gcr.io/kaniko-project/executor:debug`). Если только
+- `harbor.online.tkbbank.ru/devops/pay-trivy-offline:latest` — offline Trivy image для `java-spring`
+  `container_scan`; runner должен иметь pull-доступ к этому образу до старта job, образ обновлять
+  при обновлении Trivy DB.
+- Runner'ы должны уметь запускать Kaniko (`harbor.online.tkbbank.ru/devops/kaniko-project/executor:debug`). Если только
   DinD — заменить job `package` (см. spec, вариант DinD).
 - Шаблоны `Jobs/SAST` / `Jobs/Dependency-Scanning` должны быть доступны в инстансе (иначе убрать
   из `include` или пометить `allow_failure`).

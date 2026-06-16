@@ -5,7 +5,7 @@ spec:
     values_path:
       default: "helm/values-test.yaml"
     node_image:
-      default: "node:22-alpine"
+      default: "harbor.online.tkbbank.ru/library/node:22-alpine"
     chart_repo:
       default: "https://harbor.online.tkbbank.ru/chartrepo/kubernetes"
     chart_name:
@@ -75,9 +75,9 @@ package:
   stage: package
   # DinD build+push (runners have no Kaniko). Requires a docker-capable (privileged) runner —
   # the same one that builds the java images.
-  image: docker:27
+  image: harbor.online.tkbbank.ru/library/docker:27
   services:
-    - docker:27-dind
+    - harbor.online.tkbbank.ru/library/docker:27-dind
   variables:
     DOCKER_HOST: "tcp://docker:2376"
     DOCKER_TLS_CERTDIR: "/certs"
@@ -113,7 +113,7 @@ container_scan:
   # Reset the entrypoint: the trivy image's ENTRYPOINT is `trivy`, so GitLab's `sh -c` wrapper would
   # run `trivy sh -c ...` -> "unknown command sh". Empty entrypoint lets the script run normally.
   image:
-    name: aquasec/trivy:0.51.1
+    name: harbor.online.tkbbank.ru/devops/pay-trivy-offline:latest
     entrypoint: [""]
   rules:
     - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'

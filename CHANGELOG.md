@@ -1,6 +1,18 @@
 # Changelog
 
-## [Unreleased]
+## [1.1.11]
+
+### Changed
+- `java-spring`/`node-spa`: CI job images переведены на корпоративный Harbor: Maven, Node,
+  Docker/DinD, Kaniko, Vault, Helm/Kubectl, curl и Trivy.
+- `_deploy.yml`: убраны fallback defaults `NAMESPACE=test` и `VALUES_PATH=helm/values-test.yaml`; deploy/smoke
+  теперь fail-fast проверяют обязательные переменные, которые должны приходить из inputs компонента.
+- `java-spring`: `container_scan` по умолчанию использует offline-образ
+  `harbor.online.tkbbank.ru/devops/pay-trivy-offline:latest` с предзагруженными vuln/Java DB без fallback
+  на внешние Trivy DB repository.
+- `java-spring`: добавлена централизованная установка корпоративного CA из `CORP_CA_CERT` (fallback:
+  `CERT`/`CERT_NEW`) в Maven/JVM truststore, Kaniko, Trivy и deploy/smoke job'ы Helm/kubectl. Insecure
+  TLS для Kaniko/Trivy/Helm вынесен в аварийные inputs и по умолчанию выключен.
 
 ## [1.1.10]
 

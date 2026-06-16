@@ -9,7 +9,10 @@ spec:
     values_path:
       default: "helm/values-test.yaml"
     maven_image:
-      default: "maven:3.9-eclipse-temurin-21"
+      default: "harbor.online.tkbbank.ru/library/maven:3.9-eclipse-temurin-21"
+    maven_settings_path:
+      default: "settings.xml"
+      description: "Optional Maven settings path. Used when the file exists in the service repository."
     chart_repo:
       default: "https://harbor.online.tkbbank.ru/chartrepo/kubernetes"
     chart_name:
@@ -24,12 +27,22 @@ spec:
     image_registry_project:
       default: "tkbpay"
       description: "Проект/namespace реестра под образы сервисов"
-    trivy_db_repository:
-      default: "ghcr.io/aquasecurity/trivy-db:2"
-      description: "Trivy vuln DB. В закрытом контуре зеркалить в Harbor и указать здесь."
-    trivy_java_db_repository:
-      default: "ghcr.io/aquasecurity/trivy-java-db:1"
-      description: "Trivy Java DB. В закрытом контуре зеркалить в Harbor."
+    corp_ca_enabled:
+      type: boolean
+      default: true
+      description: "Install corporate CA from CORP_CA_CERT/CERT/CERT_NEW into job trust stores."
+    kaniko_insecure_skip_tls_verify:
+      type: boolean
+      default: false
+      description: "Emergency fallback only: pass --skip-tls-verify to Kaniko."
+    trivy_insecure:
+      type: boolean
+      default: false
+      description: "Emergency fallback only: pass --insecure to Trivy registry access."
+    helm_insecure_skip_tls_verify:
+      type: boolean
+      default: false
+      description: "Emergency fallback only: pass --insecure-skip-tls-verify to Helm."
 ---
 include:
   - local: "templates/_deploy.yml"
@@ -58,22 +71,120 @@ stages: [validate, test, package, scan, deploy, smoke]
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
     - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
 
+.corp_ca:
+  before_script:
+    - &corp_ca_functions |
+      append_corp_ca_var() {
+        var_name="$1"
+        target="$2"
+        value="$(printenv "$var_name" 2>/dev/null || true)"
+        [ -z "$value" ] && return 0
+
+        if [ -f "$value" ]; then
+          cat "$value" >> "$target"
+          printf '\n' >> "$target"
+          return 0
+        fi
+
+        case "$value" in
+          *BEGIN*CERTIFICATE*) printf '%s\n' "$value" >> "$target" ;;
+          *) printf '%s' "$value" | base64 -d >> "$target"; printf '\n' >> "$target" ;;
+        esac
+      }
+
+      setup_corp_ca_bundle() {
+        target="$1"
+        mode="${2:-auto}"
+        : > "$target"
+        append_corp_ca_var CORP_CA_CERT "$target"
+        append_corp_ca_var CERT "$target"
+        append_corp_ca_var CERT_NEW "$target"
+
+        if grep -q "BEGIN CERTIFICATE" "$target"; then
+          export CORP_CA_BUNDLE="$target"
+          return 0
+        fi
+
+        export CORP_CA_BUNDLE=""
+        if [ "$mode" = "true" ]; then
+          echo "ERROR: corporate CA is enabled, but CORP_CA_CERT/CERT/CERT_NEW is empty or invalid" >&2
+          return 1
+        fi
+
+        echo "WARN: no corporate CA bundle found; continuing without CA injection" >&2
+      }
+
+      install_corp_ca_system() {
+        bundle="$1"
+        [ -n "$bundle" ] || return 0
+
+        if [ -d /usr/local/share/ca-certificates ] && command -v update-ca-certificates >/dev/null 2>&1; then
+          cp "$bundle" /usr/local/share/ca-certificates/corp-ca.crt
+          update-ca-certificates || true
+        fi
+
+        if [ -w /etc/ssl/certs/ca-certificates.crt ]; then
+          cat "$bundle" >> /etc/ssl/certs/ca-certificates.crt
+        fi
+      }
+
+      install_corp_ca_java() {
+        bundle="$1"
+        [ -n "$bundle" ] || return 0
+        command -v keytool >/dev/null 2>&1 || return 0
+
+        java_cacerts="${JAVA_HOME:-}/lib/security/cacerts"
+        if [ ! -f "$java_cacerts" ]; then
+          java_bin="$(readlink -f "$(command -v java)" 2>/dev/null || true)"
+          java_cacerts="$(dirname "$java_bin")/../lib/security/cacerts"
+        fi
+        [ -f "$java_cacerts" ] || { echo "WARN: Java cacerts not found, skipping JVM CA import" >&2; return 0; }
+
+        split_dir="/tmp/corp-ca-split"
+        rm -rf "$split_dir"
+        mkdir -p "$split_dir"
+        awk -v dir="$split_dir" '/-----BEGIN CERTIFICATE-----/{n++} n{print > (dir "/corp-ca-" n ".crt")}' "$bundle"
+        for cert in "$split_dir"/corp-ca-*.crt; do
+          [ -f "$cert" ] || continue
+          alias_name="$(basename "$cert" .crt)"
+          keytool -keystore "$java_cacerts" -storepass changeit -noprompt \
+            -importcert -trustcacerts -alias "$alias_name" -file "$cert" \
+            || echo "WARN: skipped certificate $cert" >&2
+        done
+      }
+
+.maven_corp_ca:
+  extends: .corp_ca
+  before_script:
+    - *corp_ca_functions
+    - |
+      setup_corp_ca_bundle "$CI_PROJECT_DIR/.corp-ca.pem" "$[[ inputs.corp_ca_enabled ]]"
+      install_corp_ca_system "$CORP_CA_BUNDLE"
+      install_corp_ca_java "$CORP_CA_BUNDLE"
+
 validate:
   stage: validate
   image: $[[ inputs.maven_image ]]
   <<: *mvn_cache
-  extends: .rules_mr_main
+  extends:
+    - .rules_mr_main
+    - .maven_corp_ca
   script:
     # Базовая компиляция как быстрый гейт. checkstyle:check намеренно НЕ включён: в pom'ах сервисов
     # PAY_ALL нет maven-checkstyle-plugin. Подключить отдельной строкой `mvn checkstyle:check`,
     # когда плагин появится в репозитории.
-    - mvn -B compile
+    - |
+      MAVEN_SETTINGS_OPT=""
+      if [ -n "$[[ inputs.maven_settings_path ]]" ] && [ -f "$[[ inputs.maven_settings_path ]]" ]; then
+        MAVEN_SETTINGS_OPT="-s $[[ inputs.maven_settings_path ]]"
+      fi
+      mvn -B ${MAVEN_SETTINGS_OPT:+$MAVEN_SETTINGS_OPT} compile
 
 # Валидация Vault-политики (policy-as-code, spec §14). Без привилегированного токена.
 # Запускается только если в репо есть vault/policy.hcl.
 vault_policy_validate:
   stage: validate
-  image: hashicorp/vault:1.18
+  image: harbor.online.tkbbank.ru/devops/hashicorp/vault:1.18
   rules:
     - exists: ["vault/policy.hcl"]
       if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
@@ -88,9 +199,16 @@ test:
   stage: test
   image: $[[ inputs.maven_image ]]
   <<: *mvn_cache
-  extends: .rules_mr_main
+  extends:
+    - .rules_mr_main
+    - .maven_corp_ca
   script:
-    - mvn -B verify
+    - |
+      MAVEN_SETTINGS_OPT=""
+      if [ -n "$[[ inputs.maven_settings_path ]]" ] && [ -f "$[[ inputs.maven_settings_path ]]" ]; then
+        MAVEN_SETTINGS_OPT="-s $[[ inputs.maven_settings_path ]]"
+      fi
+      mvn -B ${MAVEN_SETTINGS_OPT:+$MAVEN_SETTINGS_OPT} verify
   artifacts:
     when: always
     # spring-boot-maven-plugin repackage кладёт boot-jar в deploy/ (см. pom outputDirectory) —
@@ -102,7 +220,7 @@ test:
 package:
   stage: package
   image:
-    name: gcr.io/kaniko-project/executor:debug
+    name: harbor.online.tkbbank.ru/devops/kaniko-project/executor:debug
     entrypoint: [""]
   # Собираем образ только при изменении того, что на него влияет.
   # Коммит, трогающий только helm/** — сборку не триггерит (см. spec §13).
@@ -110,6 +228,14 @@ package:
     - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
       changes: ["Dockerfile", "src/**/*", "pom.xml"]
   script:
+    - *corp_ca_functions
+    - |
+      setup_corp_ca_bundle "$CI_PROJECT_DIR/.corp-ca.pem" "$[[ inputs.corp_ca_enabled ]]"
+      if [ -n "$CORP_CA_BUNDLE" ]; then
+        mkdir -p /kaniko/ssl/certs
+        touch /kaniko/ssl/certs/ca-certificates.crt
+        cat "$CORP_CA_BUNDLE" >> /kaniko/ssl/certs/ca-certificates.crt
+      fi
     # Авторизация Kaniko в Harbor из переменной HARBOR_DOCKER_CONFIG (GitLab сам подкладывает только
     # DOCKER_AUTH_CONFIG). Robust к формату: File-переменная (путь), сырой JSON ({...) или base64.
     - |
@@ -122,57 +248,49 @@ package:
           *)   printf '%s' "$HARBOR_DOCKER_CONFIG" | base64 -d > /kaniko/.docker/config.json ;;
         esac
       fi
-      # with_cert: Dockerfile делает COPY certs/ и импортит корп-CA. Кладём $CERT в certs/
-      # (robust: File-переменная → путь, сырой PEM, или base64). Старый docker_build делал то же.
+      # with_cert: Dockerfile делает COPY certs/ и импортит corp CA в runtime truststore.
+      # Кладём единый bundle из CORP_CA_CERT/CERT/CERT_NEW в certs/.
       if [ "$[[ inputs.with_cert ]]" = "true" ]; then
         mkdir -p certs
-        if [ -f "$CERT" ]; then
-          cp "$CERT" certs/corp-ca.crt
-        else
-          case "$CERT" in
-            *BEGIN*CERTIFICATE*) printf '%s' "$CERT" > certs/corp-ca.crt ;;
-            *) printf '%s' "$CERT" | base64 -d > certs/corp-ca.crt ;;
-          esac
-        fi
+        [ -n "$CORP_CA_BUNDLE" ] || { echo "ERROR: with_cert=true requires CORP_CA_CERT/CERT/CERT_NEW" >&2; exit 1; }
+        cp "$CORP_CA_BUNDLE" certs/corp-ca.crt
       fi
-    # --skip-tls-verify: Harbor на внутреннем CA, которому образ Kaniko не доверяет. Accepted-for-test
-    # (как helm --insecure-skip-tls-verify). PROD-харденинг: примонтировать корп-CA в /kaniko/ssl/certs/
-    # (additional-ca-cert-bundle) и убрать skip.
-    - >
-      /kaniko/executor
-      --context "$CI_PROJECT_DIR"
-      --dockerfile "$CI_PROJECT_DIR/Dockerfile"
-      --destination "$IMAGE:$IMAGE_TAG"
-      --cache=true
-      --skip-tls-verify
-      --skip-tls-verify-pull
+    - |
+      KANIKO_TLS_FLAGS=""
+      if [ "$[[ inputs.kaniko_insecure_skip_tls_verify ]]" = "true" ]; then
+        KANIKO_TLS_FLAGS="--skip-tls-verify --skip-tls-verify-pull"
+      fi
+      /kaniko/executor \
+        --context "$CI_PROJECT_DIR" \
+        --dockerfile "$CI_PROJECT_DIR/Dockerfile" \
+        --destination "$IMAGE:$IMAGE_TAG" \
+        --cache=true \
+        $KANIKO_TLS_FLAGS
 
 container_scan:
   stage: scan
+  # Runner должен уметь pull'ить этот job image до старта script (runner-level auth или DOCKER_AUTH_CONFIG).
   # entrypoint: [""] — у образа trivy бинарный entrypoint (`trivy`); без сброса GitLab передаёт
   # шелл-скрипт джобы как аргументы trivy → "unknown command sh".
   image:
-    name: aquasec/trivy:0.51.1
+    name: harbor.online.tkbbank.ru/devops/pay-trivy-offline:latest
     entrypoint: [""]
   # Сканируем только когда package реально собрал образ (те же changes). Иначе scan тянет
   # несуществующий для этого sha образ.
   rules:
     - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
       changes: ["Dockerfile", "src/**/*", "pom.xml"]
-  # Закрытый контур: trivy-db с ghcr недоступна/медленна → не блокируем деплой сканом.
-  # PROD-харденинг: зеркалить DB в Harbor (inputs trivy_db_repository/_java_) и снять allow_failure.
+  # Закрытый контур: используем offline-образ с предзагруженными vuln/Java DB. Пока не блокируем деплой
+  # сканом; когда обновление offline-образа станет регулярным и стабильным, снять allow_failure.
   allow_failure: true
-  variables:
-    # Кэш БД Trivy между прогонами (внутри проекта, чтобы GitLab cache его подхватил) —
-    # иначе vuln/Java DB качаются заново каждый раз (минуты).
-    TRIVY_CACHE_DIR: ".trivycache"
-  cache:
-    key: trivy-db
-    paths: [".trivycache"]
   script:
-    # Harbor приватный + внутренний CA: креды из HARBOR_DOCKER_CONFIG (pull) + --insecure (TLS,
-    # accepted-for-test, как Kaniko/helm). PROD-харденинг: примонтировать корп-CA.
+    - *corp_ca_functions
+    # Harbor приватный + внутренний CA: креды из HARBOR_DOCKER_CONFIG (pull) + corp CA в trust store.
+    # `trivy_insecure=true` оставлен только как аварийный fallback.
     - |
+      setup_corp_ca_bundle "$CI_PROJECT_DIR/.corp-ca.pem" "$[[ inputs.corp_ca_enabled ]]"
+      install_corp_ca_system "$CORP_CA_BUNDLE"
+
       mkdir -p "$HOME/.docker"
       if [ -f "$HARBOR_DOCKER_CONFIG" ]; then
         cp "$HARBOR_DOCKER_CONFIG" "$HOME/.docker/config.json"
@@ -182,14 +300,16 @@ container_scan:
           *)   printf '%s' "$HARBOR_DOCKER_CONFIG" | base64 -d > "$HOME/.docker/config.json" ;;
         esac
       fi
-    # --scanners vuln: только уязвимости (без secret-scan, который обходит весь ФС и упирался в
-    # таймаут). --timeout с запасом на первую (некэшированную) загрузку БД.
-    - >
-      trivy image --scanners vuln --timeout 20m --exit-code 1 --severity HIGH,CRITICAL
-      --no-progress --insecure
-      --db-repository "$[[ inputs.trivy_db_repository ]]"
-      --java-db-repository "$[[ inputs.trivy_java_db_repository ]]"
-      "$IMAGE:$IMAGE_TAG"
+    # Offline-образ хранит БД в дефолтном /root/.cache/trivy. Не задаём TRIVY_CACHE_DIR для него,
+    # иначе Trivy будет искать БД в пустой рабочей директории и упадёт на skip-db-update.
+    - |
+      TRIVY_TLS_FLAGS=""
+      if [ "$[[ inputs.trivy_insecure ]]" = "true" ]; then
+        TRIVY_TLS_FLAGS="--insecure"
+      fi
+
+      trivy image --scanners vuln --timeout 20m --exit-code 1 --severity HIGH,CRITICAL \
+        --no-progress $TRIVY_TLS_FLAGS "$IMAGE:$IMAGE_TAG"
 
 deploy_test:
   stage: deploy
@@ -202,6 +322,8 @@ deploy_test:
     CHART_VERSION: "$[[ inputs.chart_version ]]"
     NAMESPACE: "$[[ inputs.namespace ]]"
     VALUES_PATH: "$[[ inputs.values_path ]]"
+    CORP_CA_ENABLED: "$[[ inputs.corp_ca_enabled ]]"
+    HELM_INSECURE_SKIP_TLS_VERIFY: "$[[ inputs.helm_insecure_skip_tls_verify ]]"
   when: manual
   rules:
     - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
@@ -221,6 +343,8 @@ deploy_only:
     NAMESPACE: "$[[ inputs.namespace ]]"
     VALUES_PATH: "$[[ inputs.values_path ]]"
     IMAGE_TAG: "$DEPLOY_IMAGE_TAG"
+    CORP_CA_ENABLED: "$[[ inputs.corp_ca_enabled ]]"
+    HELM_INSECURE_SKIP_TLS_VERIFY: "$[[ inputs.helm_insecure_skip_tls_verify ]]"
   rules:
     - if: '$DEPLOY_IMAGE_TAG'
 
@@ -250,6 +374,7 @@ smoke_test:
     ENV: test
     RELEASE_NAME: "$[[ inputs.release_name ]]"
     NAMESPACE: "$[[ inputs.namespace ]]"
+    CORP_CA_ENABLED: "$[[ inputs.corp_ca_enabled ]]"
   rules:
     - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
       when: on_success
