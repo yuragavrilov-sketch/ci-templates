@@ -208,7 +208,9 @@ test:
       if [ -n "$[[ inputs.maven_settings_path ]]" ] && [ -f "$[[ inputs.maven_settings_path ]]" ]; then
         MAVEN_SETTINGS_OPT="-s $[[ inputs.maven_settings_path ]]"
       fi
-      mvn -B ${MAVEN_SETTINGS_OPT:+$MAVEN_SETTINGS_OPT} -DskipITs verify
+      # package runs surefire/unit tests and builds the boot jar, but does not enter failsafe
+      # integration-test/verify phases. Testcontainers-based *IT tests stay in integration_test.
+      mvn -B ${MAVEN_SETTINGS_OPT:+$MAVEN_SETTINGS_OPT} package
   artifacts:
     when: always
     # spring-boot-maven-plugin repackage кладёт boot-jar в deploy/ (см. pom outputDirectory) —
@@ -216,6 +218,31 @@ test:
     paths: ["deploy/*.jar"]
     reports:
       junit: "target/surefire-reports/TEST-*.xml"
+
+integration_test:
+  stage: test
+  image: $[[ inputs.maven_image ]]
+  <<: *mvn_cache
+  extends: .maven_corp_ca
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+      when: manual
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+      when: manual
+  allow_failure: true
+  script:
+    - |
+      MAVEN_SETTINGS_OPT=""
+      if [ -n "$[[ inputs.maven_settings_path ]]" ] && [ -f "$[[ inputs.maven_settings_path ]]" ]; then
+        MAVEN_SETTINGS_OPT="-s $[[ inputs.maven_settings_path ]]"
+      fi
+      mvn -B ${MAVEN_SETTINGS_OPT:+$MAVEN_SETTINGS_OPT} verify
+  artifacts:
+    when: always
+    reports:
+      junit:
+        - "target/surefire-reports/TEST-*.xml"
+        - "target/failsafe-reports/TEST-*.xml"
 
 package:
   stage: package

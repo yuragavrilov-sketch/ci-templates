@@ -3,8 +3,8 @@
 ## [1.1.11]
 
 ### Changed
-- `java-spring`: `test` job запускает `mvn verify` с `-DskipITs`, чтобы integration tests на
-  Testcontainers не требовали Docker daemon в обычном CI pipeline.
+- `java-spring`: `test` job запускает `mvn package` без Failsafe/Testcontainers, а `mvn verify` вынесен
+  в отдельный manual `integration_test` job с JUnit-артефактами surefire/failsafe.
 - `java-spring`/`node-spa`: CI job images переведены на корпоративный Harbor: Maven, Node,
   Docker/DinD, Kaniko, Vault, Helm/Kubectl, curl и Trivy.
 - `_deploy.yml`: убраны fallback defaults `NAMESPACE=test` и `VALUES_PATH=helm/values-test.yaml`; deploy/smoke
