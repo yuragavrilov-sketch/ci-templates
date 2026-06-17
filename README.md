@@ -76,9 +76,11 @@ include:
 | `chart_name` | `kubernetes/web` | web/nginx-чарт (не `kubernetes/java`) |
 | `chart_version` | `0.1.0` | версия web-чарта |
 | `namespace` | `test` | k8s namespace |
+| `image_registry` | `harbor.online.tkbbank.ru` | Docker registry host (Harbor) |
+| `image_registry_project` | `tkbpay` | проект реестра под образы |
 | `vite_auth_enabled` / `vite_kc_url` / `vite_kc_realm` / `vite_kc_client_id` | см. spec | build-args для Vite |
 
-Стадии: typecheck → vitest+audit → package(Kaniko + VITE build-args) → Trivy →
+Стадии: typecheck → vitest+audit → package(DinD + VITE build-args) → Trivy →
 deploy:test(manual) → smoke (`GET /`, порт 80).
 
 ## Перевыкатка / смена конфигурации без пересборки

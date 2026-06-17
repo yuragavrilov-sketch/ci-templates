@@ -14,6 +14,12 @@ spec:
       default: "0.1.0"
     namespace:
       default: "test"
+    image_registry:
+      default: "harbor.online.tkbbank.ru"
+      description: "Docker registry host (Harbor)"
+    image_registry_project:
+      default: "tkbpay"
+      description: "Project/namespace for service images"
     vite_auth_enabled:
       default: "true"
     vite_kc_url:
@@ -29,7 +35,7 @@ include:
   - template: Jobs/Dependency-Scanning.gitlab-ci.yml
 
 variables:
-  IMAGE: "$IMAGE_REGISTRY/$IMAGE_REGISTRY_PROJECT/$CI_PROJECT_NAME"
+  IMAGE: "$[[ inputs.image_registry ]]/$[[ inputs.image_registry_project ]]/$CI_PROJECT_NAME"
   IMAGE_TAG: "$CI_COMMIT_SHORT_SHA"
 
 stages: [validate, test, package, scan, deploy, smoke]
@@ -77,7 +83,8 @@ package:
   # the same one that builds the java images.
   image: harbor.online.tkbbank.ru/library/docker:27
   services:
-    - harbor.online.tkbbank.ru/library/docker:27-dind
+    - name: harbor.online.tkbbank.ru/library/docker:27-dind
+      alias: docker
   variables:
     DOCKER_HOST: "tcp://docker:2376"
     DOCKER_TLS_CERTDIR: "/certs"
@@ -94,10 +101,20 @@ package:
         - "index.html"
         - "nginx.conf"
   before_script:
-    # Harbor auth for push. Reuse the group's docker-config (GitLab DOCKER_AUTH_CONFIG variable —
-    # the same Harbor robot creds used elsewhere). If your group instead exposes named creds,
-    # replace with:  docker login -u "$HARBOR_USER" -p "$HARBOR_PASSWORD" "$IMAGE_REGISTRY"
-    - mkdir -p ~/.docker && printf '%s' "$DOCKER_AUTH_CONFIG" > ~/.docker/config.json
+    # Harbor auth for push. Prefer the shared HARBOR_DOCKER_CONFIG used by java-spring; keep
+    # DOCKER_AUTH_CONFIG as a GitLab-native fallback. Robust to File variable, raw JSON, or base64 JSON.
+    - |
+      mkdir -p ~/.docker
+      DOCKER_CONFIG_VALUE="${HARBOR_DOCKER_CONFIG:-${DOCKER_AUTH_CONFIG:-}}"
+      [ -n "$DOCKER_CONFIG_VALUE" ] || { echo "ERROR: HARBOR_DOCKER_CONFIG or DOCKER_AUTH_CONFIG is required" >&2; exit 1; }
+      if [ -f "$DOCKER_CONFIG_VALUE" ]; then
+        cp "$DOCKER_CONFIG_VALUE" ~/.docker/config.json
+      else
+        case "$DOCKER_CONFIG_VALUE" in
+          \{*) printf '%s' "$DOCKER_CONFIG_VALUE" > ~/.docker/config.json ;;
+          *)   printf '%s' "$DOCKER_CONFIG_VALUE" | base64 -d > ~/.docker/config.json ;;
+        esac
+      fi
   script:
     - >
       docker build

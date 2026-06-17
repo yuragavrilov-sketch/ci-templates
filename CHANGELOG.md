@@ -7,6 +7,12 @@
   в отдельный manual `integration_test` job с JUnit-артефактами surefire/failsafe.
 - `java-spring`/`node-spa`: CI job images переведены на корпоративный Harbor: Maven, Node,
   Docker/DinD, Kaniko, Vault, Helm/Kubectl, curl и Trivy.
+- `node-spa`: DinD service для React/Vite package job явно получает alias `docker`, чтобы
+  `DOCKER_HOST=tcp://docker:2376` резолвился после перехода service image на полный Harbor path.
+- `node-spa`: Harbor auth для Docker push теперь читает `HARBOR_DOCKER_CONFIG` с fallback на
+  `DOCKER_AUTH_CONFIG` и поддерживает File/raw JSON/base64 JSON.
+- `node-spa`: добавлены inputs `image_registry`/`image_registry_project`; React image destination теперь
+  строится из них и по умолчанию указывает в Harbor.
 - `_deploy.yml`: убраны fallback defaults `NAMESPACE=test` и `VALUES_PATH=helm/values-test.yaml`; deploy/smoke
   теперь fail-fast проверяют обязательные переменные, которые должны приходить из inputs компонента.
 - `java-spring`: `container_scan` по умолчанию использует offline-образ
